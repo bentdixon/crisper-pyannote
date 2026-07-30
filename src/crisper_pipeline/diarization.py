@@ -8,23 +8,37 @@ from pathlib import Path
 
 import soundfile as sf
 import torch
-from pyannote.audio import Pipeline
+
+from .cuda_preload import preload_torchcodec_libs
+
+preload_torchcodec_libs()
+
+from pyannote.audio import Pipeline  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
 DIARIZATION_MODEL = "pyannote/speaker-diarization-community-1"
 
 
-def load_pipeline(token: str | None = None, device: str | None = None) -> Pipeline:
-    """Load the community-1 diarization pipeline and move it to GPU if available.
+def load_pipeline(
+    token: str | None = None,
+    device: str | None = None,
+    model: str | None = None,
+) -> Pipeline:
+    """Load a diarization pipeline and move it to GPU if available.
+
+    model may be a HuggingFace pipeline id or a local config.yaml path (for
+    example one produced by finetune/optimize_pipeline.py); it defaults to
+    stock community-1.
 
     Authentication: pass a HuggingFace token explicitly, or rely on the
-    HF_TOKEN environment variable / cached `huggingface-cli login` credentials.
+    HF_TOKEN environment variable / cached `hf auth login` credentials.
     The model is gated, so its terms must be accepted on huggingface.co first.
     """
     token = token or os.environ.get("HF_TOKEN")
-    logger.info("Loading diarization pipeline %s", DIARIZATION_MODEL)
-    pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL, token=token)
+    model = model or DIARIZATION_MODEL
+    logger.info("Loading diarization pipeline %s", model)
+    pipeline = Pipeline.from_pretrained(model, token=token)
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
     pipeline.to(torch.device(device))

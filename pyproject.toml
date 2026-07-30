@@ -13,6 +13,10 @@ dependencies = [
     "pyannote-audio>=4.0",
     "torch",
     "torchaudio",
+    # CUDA 13 runtime libs required by the PyPI torchcodec wheel (used by
+    # pyannote's training dataloader); preloaded by finetune/torchcodec_preload.py.
+    "nvidia-cuda-nvrtc; sys_platform == 'linux'",
+    "nvidia-cuda-runtime; sys_platform == 'linux'",
 ]
 
 [project.scripts]

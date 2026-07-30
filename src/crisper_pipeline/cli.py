@@ -69,6 +69,14 @@ def build_parser() -> argparse.ArgumentParser:
     dia_group.add_argument("--min-speakers", type=int, default=None)
     dia_group.add_argument("--max-speakers", type=int, default=None)
     dia_group.add_argument(
+        "--diarization-model", default=None,
+        help=(
+            "diarization pipeline: HuggingFace id or local config.yaml path, "
+            "e.g. a fine-tuned pipeline from finetune/optimize_pipeline.py "
+            "(default: pyannote/speaker-diarization-community-1)"
+        ),
+    )
+    dia_group.add_argument(
         "--hf-token", default=None,
         help="HuggingFace token (default: HF_TOKEN env var or cached login)",
     )
@@ -118,7 +126,7 @@ def build_metadata(audio_path: Path, args: argparse.Namespace, run_time: datetim
             "device_index": args.device_index,
         },
         "diarization": {
-            "model": diarization.DIARIZATION_MODEL,
+            "model": args.diarization_model or diarization.DIARIZATION_MODEL,
             "mode": args.diarization_mode,
             "exclusive": args.diarization_mode == "exclusive",
             "num_speakers": args.num_speakers,
@@ -191,7 +199,9 @@ def main(argv: list[str] | None = None) -> int:
         device=args.device,
         device_index=args.device_index,
     )
-    dia_pipeline = diarization.load_pipeline(token=args.hf_token)
+    dia_pipeline = diarization.load_pipeline(
+        token=args.hf_token, model=args.diarization_model
+    )
 
     failures = 0
     for audio_path in wav_files:
