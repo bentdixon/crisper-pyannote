@@ -39,10 +39,15 @@ def write_outputs(
     transcript: dict,
     diarization_segments: list[dict],
     turns: list[dict],
+    metadata: dict,
 ) -> Path:
     """Write all pipeline outputs for one audio file.
 
-    Layout (under <output_dir>/<audio stem>/):
+    Each run gets its own directory named <audio stem>_<run timestamp>, so
+    transcribing the same file twice produces two separate outputs. Layout
+    (under <output_dir>/<audio stem>_<timestamp>/):
+        metadata.json          run timestamp plus transcription and
+                               diarization settings
         transcript.json        full word-level transcript with speakers
         transcript.txt         human-readable, speaker-attributed transcript
         diarization.json       raw exclusive diarization segments
@@ -50,11 +55,18 @@ def write_outputs(
         speakers/<SPK>.txt     human-readable transcript per participant
     """
     audio_path = Path(audio_path)
-    session_dir = Path(output_dir) / audio_path.stem
+    stamp = metadata["run_timestamp_compact"]
+    session_dir = Path(output_dir) / f"{audio_path.stem}_{stamp}"
+    suffix = 1
+    while session_dir.exists():
+        suffix += 1
+        session_dir = Path(output_dir) / f"{audio_path.stem}_{stamp}-{suffix}"
     speakers_dir = session_dir / "speakers"
-    speakers_dir.mkdir(parents=True, exist_ok=True)
+    speakers_dir.mkdir(parents=True)
 
     words = transcript["words"]
+
+    _write_json(session_dir / "metadata.json", metadata)
 
     _write_json(
         session_dir / "transcript.json",

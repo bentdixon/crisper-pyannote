@@ -32,8 +32,9 @@ uv run transcribe-session session.wav --output-dir outputs
 uv run transcribe-session /path/to/wavs/ --num-speakers 2 --output-dir outputs
 ```
 
-Outputs per input file, under `outputs/<stem>/`:
+Outputs per run, under `outputs/<stem>_<timestamp>/` (repeat runs of the same file never overwrite each other):
 
+- `metadata.json` — run timestamp, package versions, transcription and diarization settings
 - `transcript.json` — full word-level transcript with speaker labels
 - `transcript.txt` — human-readable, timestamped speaker turns
 - `diarization.json` — raw diarization segments

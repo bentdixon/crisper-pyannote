@@ -10,9 +10,11 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from datetime import datetime
+from importlib.metadata import version
 from pathlib import Path
 
-from . import asr, diarization, merge, outputs
+from . import __version__, asr, diarization, merge, outputs
 
 logger = logging.getLogger("crisper_pipeline")
 
@@ -82,6 +84,43 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def build_metadata(audio_path: Path, args: argparse.Namespace, run_time: datetime) -> dict:
+    """Collect run settings for the metadata.json written alongside outputs."""
+    return {
+        "audio": str(audio_path.resolve()),
+        "run_timestamp": run_time.isoformat(timespec="seconds"),
+        "run_timestamp_compact": run_time.strftime("%Y%m%d-%H%M%S"),
+        "versions": {
+            "crisper-whisper-2": __version__,
+            "crisperwhisper": version("crisperwhisper"),
+            "pyannote-audio": version("pyannote.audio"),
+        },
+        "transcription": {
+            "model": args.model,
+            "backend": "ct2",
+            "draft_model": args.draft_model if not args.no_speculative else None,
+            "speculative_decoding": not args.no_speculative,
+            "compute_type": args.compute_type,
+            "language": args.language,
+            "mode": "verbatim",
+            "word_timestamps": True,
+            "device": args.device,
+            "device_index": args.device_index,
+        },
+        "diarization": {
+            "model": diarization.DIARIZATION_MODEL,
+            "exclusive": True,
+            "num_speakers": args.num_speakers,
+            "min_speakers": args.min_speakers,
+            "max_speakers": args.max_speakers,
+        },
+        "merge": {
+            "algorithm": "max-overlap-per-word",
+            "fill_nearest": args.fill_nearest,
+        },
+    }
+
+
 def process_file(
     audio_path: Path,
     args: argparse.Namespace,
@@ -89,6 +128,7 @@ def process_file(
     dia_pipeline,
 ) -> Path:
     """Run ASR, diarization, merge, and output writing for one wav file."""
+    metadata = build_metadata(audio_path, args, datetime.now())
     transcript = asr.transcribe(
         asr_model,
         audio_path,
@@ -107,7 +147,7 @@ def process_file(
     )
     turns = merge.group_into_turns(words)
     return outputs.write_outputs(
-        args.output_dir, audio_path, transcript, segments, turns
+        args.output_dir, audio_path, transcript, segments, turns, metadata
     )
 
 
