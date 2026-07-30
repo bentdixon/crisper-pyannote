@@ -253,16 +253,46 @@ def split_participants(
     return assignment
 
 
+# Filename tokens that appear in wav names but not transcript names (or vice
+# versa), e.g. PronetCA_CA22695_psychs_day0001_session001.txt pairs with
+# PronetCA_CA22695_interviewAudioTranscript_psychs_day0001_session001.wav.
+NOISE_TOKENS = {"interviewaudiotranscript", "interviewaudio", "audiotranscript"}
+
+
+def normalize_stem(stem: str) -> str:
+    tokens = [t for t in stem.split("_") if t.lower() not in NOISE_TOKENS]
+    return "_".join(tokens).lower()
+
+
 def pair_files(transcripts_dir: Path, wavs_dir: Path) -> list[tuple[Path, Path]]:
-    """Match transcript JSONs to wav files by stem."""
-    wavs = {p.stem: p for p in wavs_dir.rglob("*.wav")}
+    """Match transcript files to wav files.
+
+    Matches on exact stem first, then on stems normalized by dropping known
+    noise tokens. Ambiguous matches (several wavs normalizing to the same
+    key) are skipped with a warning.
+    """
+    wavs_by_stem = {p.stem: p for p in wavs_dir.rglob("*.wav")}
+    wavs_by_key: dict[str, list[Path]] = defaultdict(list)
+    for path in wavs_by_stem.values():
+        wavs_by_key[normalize_stem(path.stem)].append(path)
+
     transcripts = sorted(
         set(transcripts_dir.rglob("*.json")) | set(transcripts_dir.rglob("*.txt"))
     )
     pairs = []
     missing = []
     for transcript in transcripts:
-        wav = wavs.get(transcript.stem)
+        wav = wavs_by_stem.get(transcript.stem)
+        if wav is None:
+            candidates = wavs_by_key.get(normalize_stem(transcript.stem), [])
+            if len(candidates) == 1:
+                wav = candidates[0]
+            elif len(candidates) > 1:
+                logger.warning(
+                    "%s: %d wavs match ambiguously (%s); skipped",
+                    transcript.stem, len(candidates),
+                    ", ".join(p.name for p in candidates),
+                )
         if wav is None:
             missing.append(transcript.stem)
         else:
