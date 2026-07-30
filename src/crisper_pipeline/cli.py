@@ -75,10 +75,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     merge_group = parser.add_argument_group("merge")
     merge_group.add_argument(
+        "--diarization-mode", default="exclusive",
+        choices=["exclusive", "overlap"],
+        help=(
+            "exclusive (default): non-overlapping diarization, speaker "
+            "assigned per word by maximum overlap; overlap: raw diarization "
+            "with overlapping segments, each segment claims the contiguous "
+            "word chunk that best fits it by temporal IoU"
+        ),
+    )
+    merge_group.add_argument(
         "--fill-nearest", action="store_true",
         help=(
-            "assign the nearest speaker to words with no diarization overlap "
-            "instead of labeling them UNKNOWN"
+            "exclusive mode only: assign the nearest speaker to words with "
+            "no diarization overlap instead of labeling them UNKNOWN"
         ),
     )
     return parser
@@ -109,13 +119,17 @@ def build_metadata(audio_path: Path, args: argparse.Namespace, run_time: datetim
         },
         "diarization": {
             "model": diarization.DIARIZATION_MODEL,
-            "exclusive": True,
+            "mode": args.diarization_mode,
+            "exclusive": args.diarization_mode == "exclusive",
             "num_speakers": args.num_speakers,
             "min_speakers": args.min_speakers,
             "max_speakers": args.max_speakers,
         },
         "merge": {
-            "algorithm": "max-overlap-per-word",
+            "algorithm": (
+                "best-fit-segment-iou" if args.diarization_mode == "overlap"
+                else "max-overlap-per-word"
+            ),
             "fill_nearest": args.fill_nearest,
         },
     }
@@ -141,11 +155,15 @@ def process_file(
         num_speakers=args.num_speakers,
         min_speakers=args.min_speakers,
         max_speakers=args.max_speakers,
+        exclusive=args.diarization_mode == "exclusive",
     )
-    words = merge.assign_speakers(
-        segments, transcript["words"], fill_nearest=args.fill_nearest
-    )
-    turns = merge.group_into_turns(words)
+    if args.diarization_mode == "overlap":
+        words, turns = merge.best_fit_segments(segments, transcript["words"])
+    else:
+        words = merge.assign_speakers(
+            segments, transcript["words"], fill_nearest=args.fill_nearest
+        )
+        turns = merge.group_into_turns(words)
     return outputs.write_outputs(
         args.output_dir, audio_path, transcript, segments, turns, metadata
     )

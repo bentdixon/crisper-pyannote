@@ -51,12 +51,15 @@ def diarize(
     num_speakers: int | None = None,
     min_speakers: int | None = None,
     max_speakers: int | None = None,
+    exclusive: bool = True,
 ) -> list[dict]:
-    """Diarize a wav file and return exclusive speaker segments.
+    """Diarize a wav file and return speaker segments.
 
-    Uses the pipeline's exclusive speaker diarization (non-overlapping
-    segments), which the pyannoteAI merge tutorial recommends for
-    reconciliation with ASR timestamps.
+    With exclusive=True (default), uses the pipeline's exclusive speaker
+    diarization (non-overlapping segments), which the pyannoteAI merge
+    tutorial recommends for reconciliation with ASR timestamps. With
+    exclusive=False, returns the raw diarization, where segments from
+    different speakers may overlap.
 
     Returns a list sorted by start time:
         [{"start": float, "end": float, "speaker": str}, ...]
@@ -70,9 +73,15 @@ def diarize(
     if max_speakers is not None:
         kwargs["max_speakers"] = max_speakers
 
-    logger.info("Diarizing %s %s", audio_path, kwargs or "")
+    logger.info(
+        "Diarizing %s (%s) %s",
+        audio_path, "exclusive" if exclusive else "overlapping", kwargs or "",
+    )
     output = pipeline(load_audio(audio_path), **kwargs)
-    annotation = output.exclusive_speaker_diarization
+    annotation = (
+        output.exclusive_speaker_diarization if exclusive
+        else output.speaker_diarization
+    )
 
     segments = [
         {"start": float(turn.start), "end": float(turn.end), "speaker": str(speaker)}

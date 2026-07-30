@@ -40,4 +40,4 @@ Outputs per run, under `outputs/<stem>_<timestamp>/` (repeat runs of the same fi
 - `diarization.json` — raw diarization segments
 - `speakers/<SPEAKER>.json`, `speakers/<SPEAKER>.txt` — per-participant word-level JSON and readable transcript
 
-Useful flags: `--fill-nearest` (attribute words in diarization gaps to the nearest speaker instead of UNKNOWN), `--min-speakers`/`--max-speakers`, `--language`, `--no-speculative`, `--device-index`.
+Useful flags: `--diarization-mode overlap` (keep raw overlapping diarization segments; each segment claims its best-fitting contiguous word chunk by temporal IoU), `--fill-nearest` (attribute words in diarization gaps to the nearest speaker instead of UNKNOWN), `--min-speakers`/`--max-speakers`, `--language`, `--no-speculative`, `--device-index`.
