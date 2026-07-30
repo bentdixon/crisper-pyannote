@@ -69,7 +69,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="epochs to train with the WavLM trunk frozen before unfreezing (default: 2)",
     )
     parser.add_argument("--patience", type=int, default=10, help="early stopping patience")
-    parser.add_argument("--num-workers", type=int, default=8)
+    parser.add_argument(
+        "--num-workers", type=int, default=0,
+        help=(
+            "dataloader workers (default: 0; pyannote re-forks workers every "
+            "epoch, which deadlocks against CUDA/FFmpeg threads on the cluster)"
+        ),
+    )
     parser.add_argument("--devices", type=int, default=1)
     parser.add_argument("--seed", type=int, default=42)
     return parser
