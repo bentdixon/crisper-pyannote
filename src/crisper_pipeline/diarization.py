@@ -6,6 +6,7 @@ import logging
 import os
 from pathlib import Path
 
+import soundfile as sf
 import torch
 from pyannote.audio import Pipeline
 
@@ -29,6 +30,18 @@ def load_pipeline(token: str | None = None, device: str | None = None) -> Pipeli
     pipeline.to(torch.device(device))
     logger.info("Diarization pipeline on %s", device)
     return pipeline
+
+
+def load_audio(audio_path: str | Path) -> dict:
+    """Load a wav file into the in-memory format pyannote pipelines accept.
+
+    Bypasses pyannote's built-in torchcodec decoding, which requires a
+    torchcodec build matching the installed CUDA/FFmpeg stack. The pipeline
+    downmixes and resamples as needed.
+    """
+    data, sample_rate = sf.read(str(audio_path), dtype="float32", always_2d=True)
+    waveform = torch.from_numpy(data.T)  # (channel, time)
+    return {"waveform": waveform, "sample_rate": sample_rate}
 
 
 def diarize(
@@ -58,7 +71,7 @@ def diarize(
         kwargs["max_speakers"] = max_speakers
 
     logger.info("Diarizing %s %s", audio_path, kwargs or "")
-    output = pipeline(str(audio_path), **kwargs)
+    output = pipeline(load_audio(audio_path), **kwargs)
     annotation = output.exclusive_speaker_diarization
 
     segments = [
