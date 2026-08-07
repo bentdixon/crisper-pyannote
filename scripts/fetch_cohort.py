@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import logging
 import re
+import shutil
 import subprocess
 import sys
 from collections import defaultdict
@@ -46,12 +47,27 @@ def session_key(site: str, subject: str, filename: str) -> str:
     return f"{site}/{subject}/{NOISE.sub('', stem)}"
 
 
-def list_bucket(bucket: str, account: str | None, cache: Path) -> list[str]:
+def find_gcloud(explicit: str | None = None) -> str:
+    """Locate the gcloud binary, including a home-directory SDK install."""
+    if explicit:
+        return explicit
+    found = shutil.which("gcloud")
+    if found:
+        return found
+    bundled = Path.home() / "google-cloud-sdk" / "bin" / "gcloud"
+    if bundled.exists():
+        return str(bundled)
+    raise RuntimeError(
+        "gcloud not found. Install the Cloud SDK, or pass --gcloud /path/to/gcloud."
+    )
+
+
+def list_bucket(bucket: str, account: str | None, cache: Path, gcloud: str) -> list[str]:
     """Recursively list the bucket once, caching the manifest next to the data."""
     if cache.exists():
         logger.info("Using cached manifest %s", cache)
-        return cache.read_text().splitlines()
-    command = ["gcloud", "storage", "ls", "--recursive", bucket]
+        return [line for line in cache.read_text().splitlines() if line.startswith("gs://")]
+    command = [gcloud, "storage", "ls", "--recursive", bucket]
     if account:
         command.append(f"--account={account}")
     logger.info("Listing %s (this takes a minute)", bucket)
@@ -115,6 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--limit", type=int, default=None, help="only fetch the first N sessions")
     parser.add_argument("--dry-run", action="store_true", help="report what would be fetched")
+    parser.add_argument("--gcloud", default=None, help="path to the gcloud binary (default: PATH, then ~/google-cloud-sdk)")
     return parser
 
 
@@ -125,7 +142,9 @@ def main(argv: list[str] | None = None) -> int:
     skip = {s.strip() for s in args.skip.split(",") if s.strip()}
     categories = [c for c in CATEGORIES if c not in skip]
 
-    paths = list_bucket(args.bucket, args.account, dest / "manifest.txt")
+    gcloud = find_gcloud(args.gcloud)
+    logger.info("Using %s", gcloud)
+    paths = list_bucket(args.bucket, args.account, dest / "manifest.txt", gcloud)
     by_session = index_objects(paths, args.bucket)
     complete = sorted(k for k, v in by_session.items() if len(v) == len(CATEGORIES))
     logger.info(
@@ -157,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
     failures = 0
     for index, (category, source, target) in enumerate(todo, start=1):
         target.parent.mkdir(parents=True, exist_ok=True)
-        command = ["gcloud", "storage", "cp", source, str(target)]
+        command = [gcloud, "storage", "cp", source, str(target)]
         if args.account:
             command.append(f"--account={args.account}")
         result = subprocess.run(command, capture_output=True, text=True)
