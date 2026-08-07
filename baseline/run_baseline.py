@@ -43,6 +43,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--work-dir", default="/tmp/transcription_core_work")
     parser.add_argument("--limit", type=int, default=None, help="only process the first N visits")
     parser.add_argument(
+        "--shard", default=None, metavar="I/N",
+        help=(
+            "process only shard I of N (1-based), so several workers can run "
+            "the same sweep on different GPUs without overlapping"
+        ),
+    )
+    parser.add_argument(
         "--redo", action="store_true",
         help="re-process visits that already have outputs (default: resume)",
     )
@@ -82,6 +89,11 @@ def main(argv: list[str] | None = None) -> int:
             v for v in visits
             if not any((Path(args.output_dir) / v.relative_to(cohort)).glob("*_transcript.txt"))
         ]
+    if args.shard:
+        index_str, _, count_str = args.shard.partition("/")
+        shard_index, shard_count = int(index_str), int(count_str)
+        visits = visits[shard_index - 1 :: shard_count]
+        logger.info("Shard %d/%d: %d visit(s)", shard_index, shard_count, len(visits))
     if args.limit:
         visits = visits[: args.limit]
     if not visits:

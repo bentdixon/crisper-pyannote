@@ -48,6 +48,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cohort", required=True)
     parser.add_argument("--mode", required=True, choices=("ours", "verbatimize"))
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument(
+        "--shard", default=None, metavar="I/N",
+        help=(
+            "process only shard I of N (1-based), so several workers can run "
+            "the same sweep on different GPUs without overlapping"
+        ),
+    )
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--model", default="large")
     parser.add_argument("--draft-model", default="turbo")
@@ -68,6 +75,11 @@ def main(argv: list[str] | None = None) -> int:
     output_root = Path(args.output_dir)
 
     visits = find_visits(cohort, need_chirp=(args.mode == "verbatimize"))
+    if args.shard:
+        index_str, _, count_str = args.shard.partition("/")
+        shard_index, shard_count = int(index_str), int(count_str)
+        visits = visits[shard_index - 1 :: shard_count]
+        logger.info("Shard %d/%d: %d visit(s)", shard_index, shard_count, len(visits))
     if args.limit:
         visits = visits[: args.limit]
     pending = [v for v in visits if not (output_root / v.relative_to(cohort) / "transcript.json").exists()]
