@@ -44,7 +44,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit", type=int, default=None, help="only process the first N visits")
     parser.add_argument("--model", default="large", help="CrisperWhisper 2.0 model (default: large)")
     parser.add_argument("--draft-model", default="turbo")
-    parser.add_argument("--no-speculative", action="store_true")
+    parser.add_argument(
+        "--speculative", action="store_true",
+        help=(
+            "enable speculative decoding. Off by default here: it makes word "
+            "timings less accurate (accepted draft tokens use the draft "
+            "model's cross-attention), and this pipeline exists to be scored "
+            "on timestamp accuracy against Chirp-3"
+        ),
+    )
     parser.add_argument("--compute-type", default="float16")
     parser.add_argument("--device-index", type=int, default=0)
     parser.add_argument("--language", default="en")
@@ -73,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     core.NUM_SPEAKERS = args.num_speakers
     asr_model = core.load_crisperwhisper(
         args.model,
-        draft_model=None if args.no_speculative else args.draft_model,
+        draft_model=args.draft_model if args.speculative else None,
         compute_type=args.compute_type,
         device_index=args.device_index,
     )
@@ -107,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
                 llm_tokenizer=llm_tokenizer,
                 language=args.language,
                 token=args.hf_token,
-                speculative_decoding=not args.no_speculative,
+                speculative_decoding=args.speculative,
             )
         except Exception:
             failures += 1
