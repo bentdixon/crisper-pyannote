@@ -127,10 +127,13 @@ suggestions to appear useful. role_mapping_check must always be filled in.
 """
 
 
-def load_llm(model_id=LLM_MODEL_ID):
+def load_llm(model_id=LLM_MODEL_ID, device=None):
+    """Load the review model. `device` overrides the default cuda:0 so the
+    review can run on a different GPU than an in-flight transcription job."""
+    device = device or DEVICE
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     model = AutoModelForCausalLM.from_pretrained(
-        model_id, torch_dtype=TORCH_DTYPE, device_map=DEVICE,
+        model_id, torch_dtype=TORCH_DTYPE, device_map=device,
     )
     return model, tokenizer
 
@@ -174,7 +177,7 @@ def run_llm_verification(model, tokenizer, transcript_text):
         {"role": "user", "content": f"Transcript:\n\n{transcript_text}"},
     ]
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    inputs = tokenizer(prompt, return_tensors="pt").to(DEVICE)
+    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
 
     output_ids = model.generate(**inputs, max_new_tokens=2000, do_sample=False)
     response = tokenizer.decode(output_ids[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)

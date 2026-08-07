@@ -132,6 +132,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--outputs", required=True, help="run_baseline.py output tree")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--model", default=None, help="review model id (default: Qwen2.5-7B-Instruct)")
+    parser.add_argument("--device", default=None, help="e.g. cuda:1, to avoid a GPU busy with transcription")
     parser.add_argument(
         "--skip", default="", help="categories not to apply (words,speakers,roles)"
     )
@@ -161,7 +162,7 @@ def main(argv: list[str] | None = None) -> int:
         from llm_review import LLM_MODEL_ID, load_llm
 
         logger.info("Loading %s", args.model or LLM_MODEL_ID)
-        model, tokenizer = load_llm(args.model or LLM_MODEL_ID)
+        model, tokenizer = load_llm(args.model or LLM_MODEL_ID, device=args.device)
 
     totals = {"suggested_words": 0, "applied_words": 0, "suggested_flags": 0,
               "applied_flags": 0, "role_swaps": 0, "visits": 0}
