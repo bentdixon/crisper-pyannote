@@ -22,6 +22,7 @@ COHORT="/data/data/wolfflab/Data/Chirp3_PSYCHS_NDA4"
 LLM_GPU_A="cuda:1"
 LLM_GPU_B="cuda:2"
 RESULTS="$REPO/outputs/results.json"
+UV="/home/btdixon/.local/bin/uv"
 
 cd "$REPO" || exit 1
 
@@ -39,20 +40,28 @@ log "  verbatimize: $(find outputs/verbatimize -name transcript.json 2>/dev/null
 log "  baseline:    $(find baseline/outputs -name '*_transcript.txt' 2>/dev/null | wc -l) visit(s)"
 
 log "stage 2: role-labelling our output"
-uv run python scripts/to_role_transcript.py \
+"$UV" run python scripts/to_role_transcript.py \
   --inputs outputs/ours --output-dir outputs/ours_roles 2>&1 | tail -3
 
-log "stage 3: LLM review on the baseline tree"
-uv run python baseline/apply_llm_corrections.py \
-  --outputs baseline/outputs --device "$LLM_GPU_A" 2>&1 | tail -12
-
-log "stage 4: LLM review on our role-labelled tree"
-uv run python baseline/apply_llm_corrections.py \
-  --outputs outputs/ours_roles --device "$LLM_GPU_B" 2>&1 | tail -12
+# The review is the slowest per-file stage, so shard each tree across two
+# GPUs and wait for all four workers before scoring.
+log "stage 3+4: LLM review on both trees, 2 shards each"
+for shard in 1 2; do
+  CUDA_VISIBLE_DEVICES=$((shard)) nohup "$UV" run python baseline/apply_llm_corrections.py \
+    --outputs baseline/outputs --shard "$shard/2" --skip-done --device cuda:0 \
+    > "/tmp/llm_baseline_$shard.log" 2>&1 &
+done
+for shard in 1 2; do
+  CUDA_VISIBLE_DEVICES=$((shard + 2)) nohup "$UV" run python baseline/apply_llm_corrections.py \
+    --outputs outputs/ours_roles --shard "$shard/2" --skip-done --device cuda:0 \
+    > "/tmp/llm_ours_$shard.log" 2>&1 &
+done
+wait
+log "LLM review finished"
 
 log "stage 5: scoring all systems"
 mkdir -p "$(dirname "$RESULTS")"
-uv run python scripts/evaluate_systems.py \
+"$UV" run python scripts/evaluate_systems.py \
   --cohort "$COHORT" \
   --system chirp3 \
   --system ours=outputs/ours \
