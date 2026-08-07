@@ -42,6 +42,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", default="baseline/outputs")
     parser.add_argument("--work-dir", default="/tmp/transcription_core_work")
     parser.add_argument("--limit", type=int, default=None, help="only process the first N visits")
+    parser.add_argument(
+        "--redo", action="store_true",
+        help="re-process visits that already have outputs (default: resume)",
+    )
     parser.add_argument("--model", default="large", help="CrisperWhisper 2.0 model (default: large)")
     parser.add_argument("--draft-model", default="turbo")
     parser.add_argument(
@@ -71,6 +75,13 @@ def main(argv: list[str] | None = None) -> int:
 
     cohort = Path(args.cohort)
     visits = find_visits(cohort)
+    if not args.redo:
+        # Resume: a visit with a transcript already written is done. Lets an
+        # interrupted or partially-failed sweep be re-run to pick up the rest.
+        visits = [
+            v for v in visits
+            if not any((Path(args.output_dir) / v.relative_to(cohort)).glob("*_transcript.txt"))
+        ]
     if args.limit:
         visits = visits[: args.limit]
     if not visits:
@@ -121,6 +132,15 @@ def main(argv: list[str] | None = None) -> int:
             failures += 1
             logger.exception("Failed on %s", relative)
             continue
+
+        # Hundreds of separate short transcribe calls per interview fragment
+        # the CUDA allocator; without this a long sweep OOMs partway through.
+        try:
+            import torch
+
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
 
         result["visit"] = str(relative)
         result["audio"] = audio.name
