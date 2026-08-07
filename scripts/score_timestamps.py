@@ -47,6 +47,12 @@ from crisper_pipeline.verbatimize_cli import normalize_stem
 logger = logging.getLogger("score_timestamps")
 
 RUN_SUFFIX = re.compile(r"_\d{8}-\d{6}(-\d+)?$")
+# The human transcripts carry a redaction marker the audio/Chirp names lack.
+REDACTION = re.compile(r"_(UN)?REDACTED$", re.IGNORECASE)
+
+
+def session_key(stem: str) -> str:
+    return normalize_stem(REDACTION.sub("", stem))
 
 
 def turn_anchors(turns: list[dict]) -> tuple[list[str], dict[int, float]]:
@@ -84,7 +90,7 @@ def load_candidate(directory: Path) -> dict[str, list[dict]]:
     """Map session key -> word list for a verbatimize-session output dir."""
     found: dict[str, list[dict]] = {}
     for path in sorted(directory.glob("*/transcript.json")):
-        key = normalize_stem(RUN_SUFFIX.sub("", path.parent.name))
+        key = session_key(RUN_SUFFIX.sub("", path.parent.name))
         found[key] = json.loads(path.read_text())["words"]
     return found
 
@@ -117,8 +123,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     args = build_parser().parse_args(argv)
 
-    human = {normalize_stem(p.stem): p for p in sorted(Path(args.human_dir).glob("*.txt"))}
-    chirp_paths = {normalize_stem(p.stem): p for p in sorted(Path(args.chirp_dir).glob("*.json"))}
+    human = {session_key(p.stem): p for p in sorted(Path(args.human_dir).glob("*.txt"))}
+    chirp_paths = {session_key(p.stem): p for p in sorted(Path(args.chirp_dir).glob("*.json"))}
     candidates = {}
     for entry in args.candidate:
         name, _, directory = entry.partition("=")
