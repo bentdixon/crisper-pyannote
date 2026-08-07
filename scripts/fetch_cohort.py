@@ -102,6 +102,19 @@ def index_objects(paths: list[str], bucket: str) -> dict[str, dict[str, str]]:
     return by_session
 
 
+TIMEPOINT = re.compile(r"(day\d+_session\d+)", re.IGNORECASE)
+
+
+def timepoint_of(key: str) -> str:
+    """The visit label for a session key, e.g. "day0085_session002".
+
+    Zero-padded day numbers mean plain lexical sort puts a participant's
+    visits in chronological order.
+    """
+    match = TIMEPOINT.search(key)
+    return match.group(1) if match else key.rsplit("/", 1)[-1]
+
+
 def target_for(
     layout: str, dest: Path, key: str, category: str, source: str
 ) -> Path:
@@ -109,11 +122,18 @@ def target_for(
 
     "flat"    <dest>/<category>/<filename>          (one bucket of each type)
     "subject" <dest>/<SITE>/<SUBJECT>/<category>/<filename>
+    "session" <dest>/<SITE>/<SUBJECT>/<dayNNNN_sessionNNN>/<category>/<filename>
+
+    The study is longitudinal -- most participants have several visits -- so
+    "session" is the layout that makes the repeat structure visible, and
+    keeps a visit's audio, Chirp transcript and human transcript together.
     """
     name = Path(source).name
     if layout == "flat":
         return dest / category / name
     site, subject, _ = key.split("/", 2)
+    if layout == "session":
+        return dest / site / subject / timepoint_of(key) / category / name
     return dest / site / subject / category / name
 
 
@@ -123,8 +143,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dest", default="data/cohort", help="destination directory")
     parser.add_argument("--account", default=None, help="gcloud account to authenticate as")
     parser.add_argument(
-        "--layout", default="flat", choices=("flat", "subject"),
-        help="flat: <dest>/<category>/; subject: <dest>/<SITE>/<SUBJECT>/<category>/",
+        "--layout", default="flat", choices=("flat", "subject", "session"),
+        help=(
+            "flat: <dest>/<category>/; subject: <dest>/<SITE>/<SUBJECT>/<category>/; "
+            "session: <dest>/<SITE>/<SUBJECT>/<dayNNNN_sessionNNN>/<category>/ "
+            "(shows the longitudinal structure)"
+        ),
     )
     parser.add_argument(
         "--skip", default="", help="comma-separated categories to skip (audio,chirp,human)"
