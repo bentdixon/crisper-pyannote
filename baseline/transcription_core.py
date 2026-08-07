@@ -43,6 +43,12 @@ import os
 
 import numpy as np
 import torch
+from crisper_pipeline.cuda_preload import preload_torchcodec_libs
+
+# The PyPI torchcodec wheel links CUDA 13 libs that our cu128 torch stack does
+# not ship; dlopen them first or importing pyannote raises on libnvrtc.so.13.
+# Must happen before the pyannote import below (see CLAUDE.md).
+preload_torchcodec_libs()
 
 # pyannote 3.x checkpoints predate PyTorch 2.6's stricter torch.load default.
 # We trust the official pyannote checkpoints from Hugging Face, so restore the
