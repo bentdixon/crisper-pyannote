@@ -19,6 +19,7 @@ dependencies = [
     "nvidia-cuda-runtime; sys_platform == 'linux'",
     "pydub>=0.25.1",
     "silero-vad>=6.2.1",
+    "jiwer>=4.0.0",
 ]
 
 [project.scripts]
