@@ -86,11 +86,30 @@ def index_objects(paths: list[str], bucket: str) -> dict[str, dict[str, str]]:
     return by_session
 
 
+def target_for(
+    layout: str, dest: Path, key: str, category: str, source: str
+) -> Path:
+    """Where a fetched object lands, under the chosen directory layout.
+
+    "flat"    <dest>/<category>/<filename>          (one bucket of each type)
+    "subject" <dest>/<SITE>/<SUBJECT>/<category>/<filename>
+    """
+    name = Path(source).name
+    if layout == "flat":
+        return dest / category / name
+    site, subject, _ = key.split("/", 2)
+    return dest / site / subject / category / name
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bucket", default=BUCKET)
-    parser.add_argument("--dest", default="data/cohort", help="local destination directory")
+    parser.add_argument("--dest", default="data/cohort", help="destination directory")
     parser.add_argument("--account", default=None, help="gcloud account to authenticate as")
+    parser.add_argument(
+        "--layout", default="flat", choices=("flat", "subject"),
+        help="flat: <dest>/<category>/; subject: <dest>/<SITE>/<SUBJECT>/<category>/",
+    )
     parser.add_argument(
         "--skip", default="", help="comma-separated categories to skip (audio,chirp,human)"
     )
@@ -117,7 +136,11 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Limited to %d session(s)", len(complete))
 
     planned = [
-        (category, by_session[key][category], dest / category / Path(by_session[key][category]).name)
+        (
+            category,
+            by_session[key][category],
+            target_for(args.layout, dest, key, category, by_session[key][category]),
+        )
         for key in complete
         for category in categories
     ]
@@ -127,15 +150,13 @@ def main(argv: list[str] | None = None) -> int:
         len(planned), len(planned) - len(todo), len(todo),
     )
     if args.dry_run:
-        for category, source, _ in todo[:20]:
-            logger.info("would fetch [%s] %s", category, source)
+        for category, source, target in todo[:20]:
+            logger.info("would fetch [%s] -> %s", category, target)
         return 0
-
-    for category in categories:
-        (dest / category).mkdir(parents=True, exist_ok=True)
 
     failures = 0
     for index, (category, source, target) in enumerate(todo, start=1):
+        target.parent.mkdir(parents=True, exist_ok=True)
         command = ["gcloud", "storage", "cp", source, str(target)]
         if args.account:
             command.append(f"--account={args.account}")
