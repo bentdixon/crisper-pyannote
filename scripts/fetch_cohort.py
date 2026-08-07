@@ -132,7 +132,54 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit", type=int, default=None, help="only fetch the first N sessions")
     parser.add_argument("--dry-run", action="store_true", help="report what would be fetched")
     parser.add_argument("--gcloud", default=None, help="path to the gcloud binary (default: PATH, then ~/google-cloud-sdk)")
+    parser.add_argument(
+        "--relay", default=None, metavar="HOST:PATH",
+        help=(
+            "copy each file on to a remote host and delete the local copy, so "
+            "the machine running this only ever holds one file at a time. Use "
+            "when the remote cannot reach the bucket itself."
+        ),
+    )
     return parser
+
+
+def relay_file(local: Path, host: str, remote: Path) -> str | None:
+    """scp one file to host:remote, verify its size, and delete it locally.
+
+    Returns None on success or a short error description.
+    """
+    mkdir = subprocess.run(
+        ["ssh", host, f"mkdir -p {remote.parent}"], capture_output=True, text=True
+    )
+    if mkdir.returncode != 0:
+        return f"mkdir failed: {mkdir.stderr.strip()[:120]}"
+
+    copy = subprocess.run(
+        ["scp", "-q", str(local), f"{host}:{remote}"], capture_output=True, text=True
+    )
+    if copy.returncode != 0:
+        return f"scp failed: {copy.stderr.strip()[:120]}"
+
+    expected = local.stat().st_size
+    check = subprocess.run(
+        ["ssh", host, f"stat -c %s {remote}"], capture_output=True, text=True
+    )
+    if check.returncode != 0 or check.stdout.strip() != str(expected):
+        return f"size mismatch: local {expected}, remote {check.stdout.strip() or 'missing'}"
+
+    local.unlink(missing_ok=True)
+    return None
+
+
+def remote_existing(host: str, base: Path) -> set[str]:
+    """Files already present on the relay target, as paths relative to base."""
+    result = subprocess.run(
+        ["ssh", host, f"find {base} -type f -printf '%P\\n' 2>/dev/null"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return set()
+    return {line for line in result.stdout.splitlines() if line}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -163,9 +210,21 @@ def main(argv: list[str] | None = None) -> int:
         for key in complete
         for category in categories
     ]
-    todo = [item for item in planned if not item[2].exists()]
+    relay_host, relay_base = (None, None)
+    if args.relay:
+        relay_host, _, base = args.relay.partition(":")
+        relay_base = Path(base)
+        present = remote_existing(relay_host, relay_base)
+        logger.info("Relaying to %s:%s (%d file(s) already there)", relay_host, relay_base, len(present))
+        todo = [
+            item for item in planned
+            if str(item[2].relative_to(dest)) not in present
+        ]
+    else:
+        todo = [item for item in planned if not item[2].exists()]
+
     logger.info(
-        "%d file(s) planned, %d already present, %d to download",
+        "%d file(s) planned, %d already present, %d to transfer",
         len(planned), len(planned) - len(todo), len(todo),
     )
     if args.dry_run:
@@ -183,6 +242,16 @@ def main(argv: list[str] | None = None) -> int:
         if result.returncode != 0:
             failures += 1
             logger.error("Failed [%s] %s: %s", category, source, result.stderr.strip()[:200])
+            continue
+
+        if relay_host:
+            problem = relay_file(
+                target, relay_host, relay_base / target.relative_to(dest)
+            )
+            if problem:
+                failures += 1
+                logger.error("Relay failed for %s: %s", target.name, problem)
+
         if index % 25 == 0 or index == len(todo):
             logger.info("  %d/%d", index, len(todo))
 
