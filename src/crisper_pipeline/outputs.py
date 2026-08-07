@@ -33,6 +33,78 @@ def _render_turns(turns: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _run_directory(output_dir: str | Path, audio_path: Path, metadata: dict) -> Path:
+    """Allocate <output_dir>/<audio stem>_<run timestamp>, avoiding collisions."""
+    stamp = metadata["run_timestamp_compact"]
+    session_dir = Path(output_dir) / f"{audio_path.stem}_{stamp}"
+    suffix = 1
+    while session_dir.exists():
+        suffix += 1
+        session_dir = Path(output_dir) / f"{audio_path.stem}_{stamp}-{suffix}"
+    return session_dir
+
+
+def write_verbatimize_outputs(
+    output_dir: str | Path,
+    audio_path: str | Path,
+    result: dict,
+    turns: list[dict],
+    metadata: dict,
+) -> Path:
+    """Write the outputs for one verbatimized Chirp-3 session.
+
+    Layout (under <output_dir>/<audio stem>_<timestamp>/):
+        metadata.json          run settings plus verbatimize statistics
+        transcript.json        verbatim words with speaker and origin
+                               ("chirp", "inserted", or "chirp-fallback")
+        transcript.txt         human-readable, speaker-attributed transcript
+        inserted.json          only the disfluencies verbatimize recovered
+        speakers/<SPK>.json    word-level JSON per participant
+        speakers/<SPK>.txt     human-readable transcript per participant
+    """
+    audio_path = Path(audio_path)
+    session_dir = _run_directory(output_dir, audio_path, metadata)
+    speakers_dir = session_dir / "speakers"
+    speakers_dir.mkdir(parents=True)
+
+    words = result["words"]
+
+    _write_json(session_dir / "metadata.json", metadata)
+    _write_json(
+        session_dir / "transcript.json",
+        {
+            "audio": audio_path.name,
+            "duration": result["duration"],
+            "stats": result["stats"],
+            "text": result["text"],
+            "words": words,
+        },
+    )
+    _write_json(
+        session_dir / "inserted.json",
+        [w for w in words if w["origin"] == "inserted"],
+    )
+    (session_dir / "transcript.txt").write_text(_render_turns(turns))
+    logger.info("Wrote %s", session_dir / "transcript.txt")
+
+    for speaker in sorted({w["speaker"] for w in words}):
+        speaker_words = [w for w in words if w["speaker"] == speaker]
+        speaker_turns = [t for t in turns if t["speaker"] == speaker]
+        _write_json(
+            speakers_dir / f"{speaker}.json",
+            {
+                "audio": audio_path.name,
+                "speaker": speaker,
+                "num_words": len(speaker_words),
+                "words": speaker_words,
+            },
+        )
+        (speakers_dir / f"{speaker}.txt").write_text(_render_turns(speaker_turns))
+        logger.info("Wrote per-speaker outputs for %s", speaker)
+
+    return session_dir
+
+
 def write_outputs(
     output_dir: str | Path,
     audio_path: str | Path,
@@ -55,12 +127,7 @@ def write_outputs(
         speakers/<SPK>.txt     human-readable transcript per participant
     """
     audio_path = Path(audio_path)
-    stamp = metadata["run_timestamp_compact"]
-    session_dir = Path(output_dir) / f"{audio_path.stem}_{stamp}"
-    suffix = 1
-    while session_dir.exists():
-        suffix += 1
-        session_dir = Path(output_dir) / f"{audio_path.stem}_{stamp}-{suffix}"
+    session_dir = _run_directory(output_dir, audio_path, metadata)
     speakers_dir = session_dir / "speakers"
     speakers_dir.mkdir(parents=True)
 

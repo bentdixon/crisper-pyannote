@@ -21,6 +21,7 @@ dependencies = [
 
 [project.scripts]
 transcribe-session = "crisper_pipeline.cli:main"
+verbatimize-session = "crisper_pipeline.verbatimize_cli:main"
 
 [build-system]
 requires = ["hatchling"]
