@@ -88,6 +88,11 @@ def build_metadata(
             "max_window_seconds": args.max_window,
             "max_new_tokens": args.max_new_tokens,
             "word_timestamps": True,
+            "realign": args.realign,
+            "timestamp_source": (
+                "whole-session forced alignment" if args.realign
+                else "per-window verbatimize cross-attention"
+            ),
         },
         "speakers": {
             "source": "chirp-3",
@@ -133,6 +138,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-new-tokens", type=int, default=448,
         help="decoder token budget per window (default: 448)",
     )
+    parser.add_argument(
+        "--realign", action="store_true",
+        help=(
+            "after verbatimizing, re-time every word with a whole-session "
+            "forced alignment (sharper than the prompted per-window "
+            "cross-attention, and free of window seams; roughly doubles runtime)"
+        ),
+    )
     return parser
 
 
@@ -153,6 +166,7 @@ def process_file(
         language=args.language,
         max_window=args.max_window,
         max_new_tokens=args.max_new_tokens,
+        realign=args.realign,
     )
     turns = merge.group_into_turns(result["words"])
 

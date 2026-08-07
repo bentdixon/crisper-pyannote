@@ -240,6 +240,99 @@ def verbatimize_window(
     return words, True
 
 
+def realign_timestamps(
+    model, audio_path: str | Path, words: list[dict], *, language: str = "en"
+) -> int:
+    """Re-time verbatimized words with a whole-session forced alignment.
+
+    The per-window timestamps come from cross-attention captured during a
+    *prompted* decode, with the whole intended transcript in the decoder
+    prefix -- conditions the alignment heads were not trained for, and split
+    across window seams. Once the text is verbatim there is nothing left for
+    verbatimize to insert, so it can be fed straight back through
+    ``forced_align``, which transcribes the full session freely and anchors
+    each reference word to the hypothesis word it matches.
+
+    Mutates `words` in place. Returns the number of words re-timed.
+    """
+    surface = [w["word"].strip().replace(" ", "") or w["word"].strip() for w in words]
+    result = model.forced_align(
+        str(audio_path), " ".join(surface), language=language, mode="verbatim"
+    )
+    aligned = result.words or []
+
+    if len(aligned) == len(words):
+        pairs = zip(words, aligned)
+    else:
+        # Whitespace inside a surface form (or a dropped token) desynced the
+        # 1:1 mapping; recover it by matching the two sequences.
+        logger.warning(
+            "Forced alignment returned %d words for %d input words; "
+            "mapping by alignment instead of position", len(aligned), len(words),
+        )
+        matcher = difflib.SequenceMatcher(
+            a=[default_normalize(s) for s in surface],
+            b=[default_normalize(w.word) for w in aligned],
+            autojunk=False,
+        )
+        matched: list[tuple[dict, Any]] = []
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag in ("equal", "replace"):
+                for offset, di in enumerate(range(i1, i2)):
+                    dj = j1 + offset
+                    if dj < j2:
+                        matched.append((words[di], aligned[dj]))
+        pairs = iter(matched)
+
+    index_of = {id(word): position for position, word in enumerate(words)}
+    anchored: set[int] = set()
+    for word, timing in pairs:
+        if timing.start is None or timing.end is None:
+            continue
+        start = float(timing.start)
+        word["start"] = round(start, 3)
+        word["end"] = round(max(float(timing.end), start), 3)
+        anchored.add(index_of[id(word)])
+
+    # Words the alignment did not reach still hold their per-window
+    # timestamps, which are on a different footing than the re-timed ones;
+    # left alone they would break monotonicity and drag later words with
+    # them. Spread each unanchored run evenly between its neighbours.
+    _interpolate_unanchored(words, anchored)
+
+    previous = 0.0
+    for word in words:
+        word["start"] = round(max(word["start"], previous), 3)
+        word["end"] = round(max(word["end"], word["start"]), 3)
+        previous = word["start"]
+    return len(anchored)
+
+
+def _interpolate_unanchored(words: list[dict], anchored: set[int]) -> None:
+    """Re-time words missed by the alignment, between their nearest anchors."""
+    if not anchored or len(anchored) == len(words):
+        return
+    ordered = sorted(anchored)
+    first, last = ordered[0], ordered[-1]
+
+    for position in range(first):
+        words[position]["start"] = words[first]["start"]
+        words[position]["end"] = words[first]["start"]
+    for position in range(last + 1, len(words)):
+        words[position]["start"] = words[last]["end"]
+        words[position]["end"] = words[last]["end"]
+
+    for start_anchor, end_anchor in zip(ordered, ordered[1:]):
+        span = end_anchor - start_anchor
+        if span <= 1:
+            continue
+        t0, t1 = words[start_anchor]["end"], words[end_anchor]["start"]
+        step = (t1 - t0) / span if t1 > t0 else 0.0
+        for offset, position in enumerate(range(start_anchor + 1, end_anchor), start=1):
+            words[position]["start"] = round(t0 + step * (offset - 1), 3)
+            words[position]["end"] = round(t0 + step * offset, 3)
+
+
 def verbatimize_session(
     model,
     audio_path: str | Path,
@@ -249,6 +342,7 @@ def verbatimize_session(
     language: str = "en",
     max_window: float = MAX_WINDOW_SECONDS,
     max_new_tokens: int = 448,
+    realign: bool = False,
 ) -> dict[str, Any]:
     """Verbatimize a whole session against its Chirp-3 transcript.
 
@@ -292,8 +386,17 @@ def verbatimize_session(
         if index % 25 == 0 or index == len(windows):
             logger.info("  window %d/%d", index, len(windows))
 
+    retimed = None
+    if realign and words:
+        logger.info("%s: re-aligning %d words against the full session", audio_path.name, len(words))
+        try:
+            retimed = realign_timestamps(model, audio_path, words, language=language)
+        except Exception:
+            logger.exception("Forced alignment failed; keeping per-window timestamps")
+
     inserted = sum(1 for w in words if w["origin"] == ORIGIN_INSERTED)
     stats = {
+        "realigned_words": retimed,
         "windows": len(windows),
         "windows_fallback": failed,
         "chirp_words": len(chirp_words),
