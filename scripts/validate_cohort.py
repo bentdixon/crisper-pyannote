@@ -180,7 +180,8 @@ def main(argv: list[str] | None = None) -> int:
     if results:
         hours = sum(r.get("duration", 0.0) for r in results) / 3600
         print(f"  audio          : {hours:.1f} h")
-        print(f"  participants   : {len({r['visit'].split('/')[-3] for r in results})}")
+        print(f"  participants   : {len({Path(r['visit']).parent.name for r in results})}")
+        print(f"  sites          : {len({Path(r['visit']).parent.parent.name for r in results})}")
         rates = Counter()
         for r in results:
             for key in ("sample_rate", "channels"):
