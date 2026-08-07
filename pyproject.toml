@@ -17,6 +17,8 @@ dependencies = [
     # pyannote's training dataloader); preloaded by finetune/torchcodec_preload.py.
     "nvidia-cuda-nvrtc; sys_platform == 'linux'",
     "nvidia-cuda-runtime; sys_platform == 'linux'",
+    "pydub>=0.25.1",
+    "silero-vad>=6.2.1",
 ]
 
 [project.scripts]
