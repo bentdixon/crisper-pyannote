@@ -254,51 +254,48 @@ def realign_timestamps(
     each reference word to the hypothesis word it matches.
 
     Mutates `words` in place. Returns the number of words re-timed.
+
+    Note this deliberately does not call ``model.forced_align``. That helper
+    returns a timestamp for *every* reference word, silently interpolating
+    the ones its hypothesis never found -- and on this corpus a from-scratch
+    verbatim pass recovers ~14% fewer words than Chirp, so those
+    interpolations span wide gaps and are far worse than the per-window
+    timings they would replace. Aligning here instead keeps the distinction:
+    only words that genuinely match a hypothesis word are re-timed.
     """
-    surface = [w["word"].strip().replace(" ", "") or w["word"].strip() for w in words]
-    result = model.forced_align(
-        str(audio_path), " ".join(surface), language=language, mode="verbatim"
+    hypothesis = model.transcribe(
+        str(audio_path), language=language, mode="verbatim", word_timestamps=True
     )
-    aligned = result.words or []
+    heard = hypothesis.words or []
+    if not heard:
+        logger.warning("Verbatim pass produced no timed words; keeping per-window timestamps")
+        return 0
 
-    if len(aligned) == len(words):
-        pairs = zip(words, aligned)
-    else:
-        # Whitespace inside a surface form (or a dropped token) desynced the
-        # 1:1 mapping; recover it by matching the two sequences.
-        logger.warning(
-            "Forced alignment returned %d words for %d input words; "
-            "mapping by alignment instead of position", len(aligned), len(words),
-        )
-        matcher = difflib.SequenceMatcher(
-            a=[default_normalize(s) for s in surface],
-            b=[default_normalize(w.word) for w in aligned],
-            autojunk=False,
-        )
-        matched: list[tuple[dict, Any]] = []
-        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-            if tag in ("equal", "replace"):
-                for offset, di in enumerate(range(i1, i2)):
-                    dj = j1 + offset
-                    if dj < j2:
-                        matched.append((words[di], aligned[dj]))
-        pairs = iter(matched)
-
-    index_of = {id(word): position for position, word in enumerate(words)}
+    matcher = difflib.SequenceMatcher(
+        a=[default_normalize(w["word"]) for w in words],
+        b=[default_normalize(h.word) for h in heard],
+        autojunk=False,
+    )
     anchored: set[int] = set()
-    for word, timing in pairs:
-        if timing.start is None or timing.end is None:
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag != "equal":
             continue
-        start = float(timing.start)
-        word["start"] = round(start, 3)
-        word["end"] = round(max(float(timing.end), start), 3)
-        anchored.add(index_of[id(word)])
+        for offset, position in enumerate(range(i1, i2)):
+            timing = heard[j1 + offset]
+            if timing.start is None or timing.end is None:
+                continue
+            start = float(timing.start)
+            words[position]["start"] = round(start, 3)
+            words[position]["end"] = round(max(float(timing.end), start), 3)
+            anchored.add(position)
 
-    # Words the alignment did not reach still hold their per-window
-    # timestamps, which are on a different footing than the re-timed ones;
-    # left alone they would break monotonicity and drag later words with
-    # them. Spread each unanchored run evenly between its neighbours.
-    _interpolate_unanchored(words, anchored)
+    logger.info(
+        "Re-timed %d/%d words from a %d-word verbatim hypothesis (%.1f%% anchored)",
+        len(anchored), len(words), len(heard),
+        100.0 * len(anchored) / len(words) if words else 0.0,
+    )
+
+    _reconcile_unanchored(words, anchored)
 
     previous = 0.0
     for word in words:
@@ -308,29 +305,43 @@ def realign_timestamps(
     return len(anchored)
 
 
-def _interpolate_unanchored(words: list[dict], anchored: set[int]) -> None:
-    """Re-time words missed by the alignment, between their nearest anchors."""
+def _reconcile_unanchored(words: list[dict], anchored: set[int]) -> None:
+    """Fit words the hypothesis never matched between their nearest anchors.
+
+    These keep their per-window timestamps, which are real measurements
+    rather than guesses -- but the two timing sources can disagree locally,
+    so a run is only kept when it still falls inside its anchors and runs
+    forwards. Otherwise the run is spread evenly across the gap.
+    """
     if not anchored or len(anchored) == len(words):
         return
     ordered = sorted(anchored)
     first, last = ordered[0], ordered[-1]
 
     for position in range(first):
-        words[position]["start"] = words[first]["start"]
-        words[position]["end"] = words[first]["start"]
+        words[position]["start"] = min(words[position]["start"], words[first]["start"])
+        words[position]["end"] = min(words[position]["end"], words[first]["start"])
     for position in range(last + 1, len(words)):
-        words[position]["start"] = words[last]["end"]
-        words[position]["end"] = words[last]["end"]
+        words[position]["start"] = max(words[position]["start"], words[last]["end"])
+        words[position]["end"] = max(words[position]["end"], words[position]["start"])
 
     for start_anchor, end_anchor in zip(ordered, ordered[1:]):
-        span = end_anchor - start_anchor
-        if span <= 1:
+        if end_anchor - start_anchor <= 1:
             continue
+        run = range(start_anchor + 1, end_anchor)
         t0, t1 = words[start_anchor]["end"], words[end_anchor]["start"]
-        step = (t1 - t0) / span if t1 > t0 else 0.0
-        for offset, position in enumerate(range(start_anchor + 1, end_anchor), start=1):
-            words[position]["start"] = round(t0 + step * (offset - 1), 3)
-            words[position]["end"] = round(t0 + step * offset, 3)
+        times = [(words[p]["start"], words[p]["end"]) for p in run]
+        consistent = (
+            t1 >= t0
+            and all(t0 <= s <= e <= t1 for s, e in times)
+            and all(a[0] <= b[0] for a, b in zip(times, times[1:]))
+        )
+        if consistent:
+            continue
+        step = (t1 - t0) / len(run) if t1 > t0 else 0.0
+        for offset, position in enumerate(run):
+            words[position]["start"] = round(t0 + step * offset, 3)
+            words[position]["end"] = round(t0 + step * (offset + 1), 3)
 
 
 def verbatimize_session(
