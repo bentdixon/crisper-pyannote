@@ -24,11 +24,22 @@ import logging
 import re
 import shutil
 import subprocess
+import time
 import sys
 from collections import defaultdict
 from pathlib import Path
 
 logger = logging.getLogger("fetch_cohort")
+
+# Reuse one ssh connection for every mkdir/scp/stat instead of dialling out
+# per file; without this the relay trips sshd connection-rate limiting.
+SSH_MUX = [
+    "-o", "ControlMaster=auto",
+    "-o", "ControlPath=/tmp/cw2-relay-%r@%h:%p",
+    "-o", "ControlPersist=600",
+    "-o", "ConnectTimeout=60",
+    "-o", "ServerAliveInterval=30",
+]
 
 BUCKET = "gs://pronet_data/NDA_4"
 CATEGORIES = {
@@ -167,38 +178,54 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def relay_file(local: Path, host: str, remote: Path) -> str | None:
+def relay_file(local: Path, host: str, remote: Path, attempts: int = 3) -> str | None:
     """scp one file to host:remote, verify its size, and delete it locally.
+
+    Every file needs three connections (mkdir, copy, stat). Opening them
+    fresh for hundreds of files trips sshd's connection-rate limiting and
+    the copy dies with "kex_exchange_identification: Connection reset by
+    peer", so connections are multiplexed over one shared master and each
+    step is retried with backoff.
 
     Returns None on success or a short error description.
     """
-    mkdir = subprocess.run(
-        ["ssh", host, f"mkdir -p {remote.parent}"], capture_output=True, text=True
-    )
-    if mkdir.returncode != 0:
-        return f"mkdir failed: {mkdir.stderr.strip()[:120]}"
+    for attempt in range(1, attempts + 1):
+        mkdir = subprocess.run(
+            ["ssh", *SSH_MUX, host, f"mkdir -p {remote.parent}"],
+            capture_output=True, text=True,
+        )
+        if mkdir.returncode != 0:
+            problem = f"mkdir failed: {mkdir.stderr.strip()[:120]}"
+        else:
+            copy = subprocess.run(
+                ["scp", *SSH_MUX, "-q", str(local), f"{host}:{remote}"],
+                capture_output=True, text=True,
+            )
+            if copy.returncode != 0:
+                problem = f"scp failed: {copy.stderr.strip()[:120]}"
+            else:
+                expected = local.stat().st_size
+                check = subprocess.run(
+                    ["ssh", *SSH_MUX, host, f"stat -c %s {remote}"],
+                    capture_output=True, text=True,
+                )
+                if check.returncode == 0 and check.stdout.strip() == str(expected):
+                    local.unlink(missing_ok=True)
+                    return None
+                problem = (
+                    f"size mismatch: local {expected}, "
+                    f"remote {check.stdout.strip() or 'missing'}"
+                )
 
-    copy = subprocess.run(
-        ["scp", "-q", str(local), f"{host}:{remote}"], capture_output=True, text=True
-    )
-    if copy.returncode != 0:
-        return f"scp failed: {copy.stderr.strip()[:120]}"
-
-    expected = local.stat().st_size
-    check = subprocess.run(
-        ["ssh", host, f"stat -c %s {remote}"], capture_output=True, text=True
-    )
-    if check.returncode != 0 or check.stdout.strip() != str(expected):
-        return f"size mismatch: local {expected}, remote {check.stdout.strip() or 'missing'}"
-
-    local.unlink(missing_ok=True)
-    return None
+        if attempt < attempts:
+            time.sleep(5 * attempt)
+    return problem
 
 
 def remote_existing(host: str, base: Path) -> set[str]:
     """Files already present on the relay target, as paths relative to base."""
     result = subprocess.run(
-        ["ssh", host, f"find {base} -type f -printf '%P\\n' 2>/dev/null"],
+        ["ssh", *SSH_MUX, host, f"find {base} -type f -printf '%P\\n' 2>/dev/null"],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
