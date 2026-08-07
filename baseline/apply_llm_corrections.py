@@ -131,6 +131,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--outputs", required=True, help="run_baseline.py output tree")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--shard", default=None, metavar="I/N",
+        help=(
+            "review only shard I of N (1-based) so several workers can share "
+            "the tree across GPUs; the review is the slowest stage per file"
+        ),
+    )
+    parser.add_argument(
+        "--skip-done", action="store_true",
+        help="skip transcripts that already have a corrected copy (resume)",
+    )
     parser.add_argument("--model", default=None, help="review model id (default: Qwen2.5-7B-Instruct)")
     parser.add_argument("--device", default=None, help="e.g. cuda:1, to avoid a GPU busy with transcription")
     parser.add_argument(
@@ -150,6 +161,17 @@ def main(argv: list[str] | None = None) -> int:
 
     outputs = Path(args.outputs)
     transcripts = sorted(outputs.rglob("*_transcript.txt"))
+    transcripts = [t for t in transcripts if not t.name.endswith("_transcript_corrected.txt")]
+    if args.skip_done:
+        transcripts = [
+            t for t in transcripts
+            if not (t.parent / f"{t.name[: -len('_transcript.txt')]}_transcript_corrected.txt").exists()
+        ]
+    if args.shard:
+        index_str, _, count_str = args.shard.partition("/")
+        shard_index, shard_count = int(index_str), int(count_str)
+        transcripts = transcripts[shard_index - 1 :: shard_count]
+        logger.info("Shard %d/%d: %d transcript(s)", shard_index, shard_count, len(transcripts))
     if args.limit:
         transcripts = transcripts[: args.limit]
     if not transcripts:
