@@ -146,6 +146,48 @@ def predicted_streams(words: list[dict]) -> dict[str, dict]:
     return {k: {"text": " ".join(v["text"]), "spans": v["spans"]} for k, v in streams.items()}
 
 
+def diarization_spans(words: list[dict]) -> dict[str, dict]:
+    """Word list -> speaker spans built by the reference's own tiling rule.
+
+    DER compares a reference whose turn ends were synthesized from the next
+    turn's start, so the reference tiles the recording and declares no
+    non-speech at all. Scoring raw word spans against that reference charges
+    every inter-word silence as missed detection: measured over six sessions,
+    false alarm was exactly 0.000 (nothing can be a false alarm when the
+    reference calls everything speech) and missed detection accounted for
+    0.41-0.63 of a 0.54-0.76 DER, while real speaker confusion was 0.10-0.27.
+    That DER ranked systems by how much of the timeline their segments covered,
+    not by whether they attributed words to the right speaker.
+
+    So the hypothesis is built the same way the reference was: consecutive
+    same-speaker words group into a turn, and each turn extends to the start of
+    the following word. Both sides then tile the timeline, and DER can only
+    move on label disagreement.
+    """
+    usable = [
+        w for w in words
+        if w.get("start") is not None and w.get("end") is not None
+    ]
+    if not usable:
+        return {}
+    usable = sorted(usable, key=lambda w: float(w["start"]))
+
+    streams: dict[str, dict] = {}
+    index = 0
+    while index < len(usable):
+        speaker = usable[index].get("speaker") or "UNKNOWN"
+        start = float(usable[index]["start"])
+        end = max(float(usable[index]["end"]), start)
+        while index + 1 < len(usable) and (usable[index + 1].get("speaker") or "UNKNOWN") == speaker:
+            index += 1
+            end = max(end, float(usable[index]["end"]))
+        if index + 1 < len(usable):
+            end = max(end, float(usable[index + 1]["start"]))
+        streams.setdefault(speaker, {"text": "", "spans": []})["spans"].append((start, end))
+        index += 1
+    return streams
+
+
 def overlap_seconds(a_spans, b_spans) -> float:
     """Total temporal overlap between two sets of intervals."""
     if not a_spans or not b_spans:
@@ -221,13 +263,33 @@ def score_visit(turns: list[dict], words: list[dict]) -> dict | None:
         stream_wers.append(jiwer.process_words(ref_text, hyp_text or "*").wer if hyp_text else 1.0)
         stream_qtps.append(qtp_score(ref_text, hyp_text))
 
-    metric = DiarizationErrorRate(collar=0.25, skip_overlap=False)
-    der = float(metric(to_annotation(reference), to_annotation(hypothesis)))
+    # DER on granularity-matched spans (see diarization_spans), reported with
+    # its confusion component broken out: confusion alone is the pure
+    # speaker-attribution error, free of any speech/non-speech disagreement.
+    tiled = diarization_spans(words)
+    reference_annotation = to_annotation(reference)
+    der = der_confusion = der_word_level = None
+    if tiled:
+        components = DiarizationErrorRate(collar=0.25, skip_overlap=False)(
+            reference_annotation, to_annotation(tiled), detailed=True
+        )
+        total = components["total"]
+        if total:
+            der = float(components["diarization error rate"])
+            der_confusion = float(components["confusion"] / total)
+        # The old word-span number, kept so the change is auditable.
+        der_word_level = float(
+            DiarizationErrorRate(collar=0.25, skip_overlap=False)(
+                reference_annotation, to_annotation(hypothesis)
+            )
+        )
 
     return {
         "wer": pooled.wer,
         "swer": float(np.mean(stream_wers)) if stream_wers else None,
         "der": der,
+        "der_confusion": der_confusion,
+        "der_word_level": der_word_level,
         "qtp_f1": float(np.mean(stream_qtps)) if stream_qtps else None,
         "ref_words": len(reference_text.split()),
         "hyp_words": len(hypothesis_text.split()),
@@ -389,18 +451,25 @@ def main(argv: list[str] | None = None) -> int:
             "WER": mean([r["wer"] for r in results]),
             "sWER": mean([r["swer"] for r in results]),
             "DER": mean([r["der"] for r in results]),
+            "DER_confusion": mean([r.get("der_confusion") for r in results]),
+            "DER_word_level": mean([r.get("der_word_level") for r in results]),
+            "no_timestamps": sum(1 for r in results if r["der"] is None),
             "QTP_F1": mean([r["qtp_f1"] for r in results]),
             "ref_words": sum(r["ref_words"] for r in results),
             "hyp_words": sum(r["hyp_words"] for r in results),
         }
 
-    print(f"\n  {'system':16s} {'visits':>6} {'WER':>8} {'sWER':>8} {'DER':>8} {'QTP-F1':>8}")
+    print(
+        f"\n  {'system':16s} {'visits':>6} {'WER':>8} {'sWER':>8} {'DER':>8} "
+        f"{'DERconf':>8} {'DERword':>8} {'QTP-F1':>8} {'no_ts':>6}"
+    )
     for name, stats in aggregate.items():
         def show(key, spec=".4f"):
             return format(stats[key], spec) if stats[key] is not None else "-"
         print(
             f"  {name:16s} {stats['visits']:6d} {show('WER'):>8} {show('sWER'):>8} "
-            f"{show('DER'):>8} {show('QTP_F1'):>8}"
+            f"{show('DER'):>8} {show('DER_confusion'):>8} {show('DER_word_level'):>8} "
+            f"{show('QTP_F1'):>8} {stats['no_timestamps']:6d}"
         )
 
     if args.output:
