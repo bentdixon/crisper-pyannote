@@ -95,15 +95,18 @@ METRICS = [
 ]
 
 
-def quartiles(values: list[float]) -> tuple[float, float] | None:
-    """p25/p75 of a per-visit metric, or None when there is too little data."""
+def quartiles(values: list[float]) -> tuple[float, float, float] | None:
+    """p25 / median / p75 of a per-visit metric, or None if too little data.
+
+    The median matters here: several systems have means dragged well past their
+    own p75 by a tail of catastrophic visits, so a bar showing only the mean
+    would misrepresent the typical session.
+    """
     clean = sorted(v for v in values if v is not None)
     if len(clean) < 4:
         return None
-    return (
-        statistics.quantiles(clean, n=4)[0],
-        statistics.quantiles(clean, n=4)[2],
-    )
+    quarters = statistics.quantiles(clean, n=4)
+    return (quarters[0], quarters[1], quarters[2])
 
 
 def collect(per_visit: dict, key: str) -> dict[str, list[float]]:
@@ -138,23 +141,25 @@ def escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def bar_panel(
+def chart_svg(
     title: str,
-    direction: str,
-    caption: str,
     values: dict[str, float | None],
-    spreads: dict[str, tuple[float, float] | None],
+    spreads: dict[str, tuple[float, float, float] | None],
     present: list[str],
-) -> str:
-    """One horizontal-bar small multiple as inline SVG.
+    direction: str,
+    caption: str | None = None,
+    standalone: bool = False,
+) -> tuple[str, int, int]:
+    """One horizontal-bar chart as inline SVG, with its pixel size.
 
     Horizontal because six system names do not fit legibly under vertical
     bars. Gridlines sit on the value axis only and are drawn before the bars
-    so the data reads on top of them.
+    so the data reads on top of them. The size is returned so a caller
+    exporting a standalone image can fit the canvas to the chart exactly.
     """
     rows = [(n, parts, colour) for n, parts, colour, _ in SYSTEMS if n in present]
     if not rows:
-        return ""
+        return "", 0, 0
 
     # Labels are multi-line (one component per line), so the row has to be tall
     # enough for the longest label and the label gutter wide enough for the
@@ -162,13 +167,22 @@ def bar_panel(
     line_h = 14
     max_lines = max(len(parts) for _, parts, _ in rows)
     row_h = max(30, max_lines * line_h + 6)
-    gap, pad_l, pad_r, pad_t, pad_b = 12, 250, 52, 14, 30
+    gap, pad_l, pad_r, pad_b = 12, 250, 52, 30
     plot_w = 300
-    height = pad_t + len(rows) * (row_h + gap) + pad_b
+    # standalone puts the title block and legend inside the SVG, so an exported
+    # image is a single element of known size. Composing them as HTML around
+    # the SVG instead means the exporter has to predict the page's laid-out
+    # height, and a wrong prediction silently crops the axis labels away.
+    head_h = 58 if standalone else 0
+    foot_h = 30 if standalone else 0
+    pad_t = 14 + head_h
+    height = pad_t + len(rows) * (row_h + gap) + pad_b + foot_h
     width = pad_l + plot_w + pad_r
 
     numeric = [v for v in values.values() if v is not None]
-    spread_max = [s[1] for s in spreads.values() if s is not None]
+    # s is (p25, median, p75): scale to p75, not the median, or a long upper
+    # whisker runs past the plot area and strikes through the value label.
+    spread_max = [s[2] for s in spreads.values() if s is not None]
     top = max(numeric + spread_max) if (numeric or spread_max) else 1.0
     top = max(top * 1.1, 0.05)
 
@@ -181,10 +195,24 @@ def bar_panel(
     def x(value: float) -> float:
         return pad_l + (value / top) * plot_w
 
+    # Explicit width/height as well as viewBox: an SVG with width="100%" and no
+    # height has no intrinsic size, and a standalone export renders it short --
+    # the axis labels and everything below them silently vanish from the image.
+    # The combined report scales it back down responsively via CSS.
     parts = [
-        f'<svg viewBox="0 0 {width} {height}" width="100%" role="img" '
-        f'aria-label="{escape(title)} by system">'
+        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+        f'role="img" aria-label="{escape(title)} by system">'
     ]
+
+    plot_bottom = height - pad_b - foot_h
+
+    if standalone:
+        parts.append(
+            f'<text x="0" y="17" class="ttl">{escape(title)}</text>'
+            f'<text x="0" y="34" class="sub">{escape(direction.upper())}</text>'
+        )
+        if caption:
+            parts.append(f'<text x="0" y="50" class="cap">{escape(caption)}</text>')
 
     # gridlines + value-axis ticks, behind the data
     ticks = 5
@@ -192,11 +220,11 @@ def bar_panel(
         value = top * i / ticks
         gx = round(x(value), 1)
         parts.append(
-            f'<line x1="{gx}" y1="{pad_t}" x2="{gx}" y2="{height - pad_b}" '
+            f'<line x1="{gx}" y1="{pad_t}" x2="{gx}" y2="{plot_bottom}" '
             f'stroke="{GRIDLINE}" stroke-width="1"/>'
         )
         parts.append(
-            f'<text x="{gx}" y="{height - pad_b + 15}" text-anchor="middle" '
+            f'<text x="{gx}" y="{plot_bottom + 15}" text-anchor="middle" '
             f'class="tick">{value:.2f}</text>'
         )
 
@@ -228,7 +256,8 @@ def bar_panel(
 
         spread = spreads.get(name)
         if spread:
-            lo, hi = x(spread[0]), x(spread[1])
+            low, median, high = spread
+            lo, hi = x(low), x(high)
             cy = y + row_h / 2
             parts.append(
                 f'<line x1="{lo:.1f}" y1="{cy}" x2="{hi:.1f}" y2="{cy}" '
@@ -239,10 +268,22 @@ def bar_panel(
                     f'<line x1="{cap:.1f}" y1="{cy - 5}" x2="{cap:.1f}" y2="{cy + 5}" '
                     f'stroke="{MUTED_DARK}" stroke-width="1.2" opacity="0.55"/>'
                 )
+            # Median tick. Where it sits far from the bar's end, the mean is
+            # being carried by a tail rather than describing a typical session.
+            mx = x(median)
+            parts.append(
+                f'<line x1="{mx:.1f}" y1="{y + 3}" x2="{mx:.1f}" y2="{y + row_h - 3}" '
+                f'stroke="#ffffff" stroke-width="3"/>'
+                f'<line x1="{mx:.1f}" y1="{y + 3}" x2="{mx:.1f}" y2="{y + row_h - 3}" '
+                f'stroke="{TEXT}" stroke-width="1.4"/>'
+            )
 
-        label_x = min(x(value), pad_l + plot_w) + 7
+        # Value in a fixed right-hand column rather than at the bar's end: the
+        # p25-p75 whisker often extends past the bar, and a label placed by bar
+        # length ends up struck through by the whisker cap.
         parts.append(
-            f'<text x="{label_x:.1f}" y="{y + row_h / 2 + 4}" class="val">{value:.3f}</text>'
+            f'<text x="{width - 8}" y="{y + row_h / 2 + 4}" text-anchor="end" '
+            f'class="val">{value:.3f}</text>'
         )
         if name == best:
             parts.append(
@@ -250,17 +291,46 @@ def bar_panel(
             )
 
     parts.append(
-        f'<line x1="{pad_l}" y1="{pad_t}" x2="{pad_l}" y2="{height - pad_b}" '
+        f'<line x1="{pad_l}" y1="{pad_t}" x2="{pad_l}" y2="{plot_bottom}" '
         f'stroke="{AXIS}" stroke-width="1"/>'
     )
-    parts.append("</svg>")
 
+    if standalone:
+        ly = height - 10
+        parts.append(
+            f'<line x1="0" y1="{height - 26}" x2="{width}" y2="{height - 26}" '
+            f'stroke="{GRIDLINE}" stroke-width="1"/>'
+            f'<circle cx="4" cy="{ly - 4}" r="4" fill="{WINNER}"/>'
+            f'<text x="14" y="{ly}" class="leg">best</text>'
+            f'<rect x="62" y="{ly - 9}" width="2" height="11" fill="{TEXT}"/>'
+            f'<text x="70" y="{ly}" class="leg">bar = mean, tick = median</text>'
+            f'<line x1="228" y1="{ly - 4}" x2="248" y2="{ly - 4}" '
+            f'stroke="{MUTED_DARK}" stroke-width="1.2" opacity="0.6"/>'
+            f'<text x="254" y="{ly}" class="leg">p25-p75 across visits</text>'
+        )
+
+    parts.append("</svg>")
+    return "".join(parts), width, height
+
+
+def bar_panel(
+    title: str,
+    direction: str,
+    caption: str,
+    values: dict[str, float | None],
+    spreads: dict[str, tuple[float, float, float] | None],
+    present: list[str],
+) -> str:
+    """chart_svg wrapped in its caption, for the combined report."""
+    svg, _, _ = chart_svg(title, values, spreads, present, direction)
+    if not svg:
+        return ""
     return (
         '<figure class="panel">'
         f'<figcaption><h3>{escape(title)}</h3>'
         f'<span class="dir">{escape(direction)}</span>'
         f'<p>{escape(caption)}</p></figcaption>'
-        + "".join(parts)
+        + svg
         + "</figure>"
     )
 
@@ -362,6 +432,7 @@ section {{ margin-top: 52px; }}
 .panel h3 {{ font-size: 17px; font-weight: 600; margin: 0; }}
 .dir {{ font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }}
 .panel figcaption p {{ font-size: 13px; color: var(--muted-dark); margin: 2px 0 4px; }}
+.panel svg {{ width: 100%; height: auto; max-width: 100%; }}
 svg .cat {{ font-family: 'DM Sans', sans-serif; font-size: 12px; font-weight: 500; fill: var(--text); }}
 svg .val {{ font-family: 'DM Sans', sans-serif; font-size: 11px; font-weight: 500; fill: var(--muted); }}
 svg .tick {{ font-family: 'DM Sans', sans-serif; font-size: 10px; font-weight: 500; fill: var(--muted); }}
@@ -369,6 +440,7 @@ svg .tick {{ font-family: 'DM Sans', sans-serif; font-size: 10px; font-weight: 5
 .legend span {{ display: inline-flex; align-items: center; gap: 7px; }}
 .dot {{ width: 9px; height: 9px; border-radius: 50%; background: var(--winner); }}
 .whisker {{ width: 22px; height: 1px; background: var(--muted-dark); opacity: 0.6; }}
+.bartick {{ width: 2px; height: 12px; background: var(--text); }}
 .tablewrap {{ overflow-x: auto; }}
 table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
 th, td {{ text-align: right; padding: 9px 12px; border-bottom: 1px solid var(--grid); white-space: nowrap; }}
@@ -406,6 +478,7 @@ footer {{ margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--grid)
   <div class="grid">{"".join(panels)}</div>
   <div class="legend">
     <span><span class="dot"></span>best on this metric</span>
+    <span><span class="bartick"></span>bar = mean, tick = median</span>
     <span><span class="whisker"></span>p25&ndash;p75 across visits</span>
   </div>
 </section>
@@ -467,10 +540,11 @@ footer {{ margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--grid)
       time overlap, so it captures misattribution that WER hides.</p>
     </div>
     <div class="caveat">
-      <h3>Spread is wide relative to the gaps</h3>
-      <p>The whiskers span the middle half of visits. Where two bars differ by
-      less than that spread, the ranking between them is not established by these
-      means alone.</p>
+      <h3>Means are dragged by a tail; read the median tick</h3>
+      <p>Several systems have a mean past their own p75, carried by a minority of
+      catastrophic visits rather than typical performance. Where the tick sits far
+      inside the bar, the mean is describing that tail. Where two bars differ by
+      less than the whiskers, the ranking between them is not established.</p>
     </div>
   </div>
 </section>
