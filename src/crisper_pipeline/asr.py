@@ -1,4 +1,24 @@
-"""CrisperWhisper 2.0 ASR: verbatim transcription with word-level timestamps."""
+"""CrisperWhisper 2.0 ASR: verbatim transcription with word-level timestamps.
+
+Longform audio is transcribed as a sequence of sub-30 s windows rather than
+through the model's own longform strategy. Measured on a 1094 s interview
+against two independent references (the other team's VAD-segment pipeline:
+1752 words; Chirp-3: ~1730):
+
+    longform_strategy="continuation"   651 words   <- the model default
+    ... with stride 20                 802
+    ... with stride 15                1203
+    strategy="chunked_lcs"            1637        (no word timestamps)
+    windowed short-form               (this)
+
+Each 30 s continuation chunk emitted only ~16 words regardless of stride --
+dense speech in 30 s is 60-90 -- so chunks were ending early and shrinking the
+stride merely packed in more of them. The same audio transcribed in isolation
+as 25 s clips came back complete, so the loss is in longform stitching, not in
+decoding. "chunked_lcs" and "token_lcs" recover the content but raise
+NotImplementedError with word_timestamps=True, which every downstream stage
+here needs, so windowing is done here instead.
+"""
 
 from __future__ import annotations
 
@@ -6,9 +26,152 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import soundfile as sf
+import torch
 from crisperwhisper import CrisperWhisperModel
 
 logger = logging.getLogger(__name__)
+
+SAMPLE_RATE = 16000
+MAX_WINDOW_SECONDS = 25.0
+WINDOW_PAD_SECONDS = 0.2
+VAD_THRESHOLD = 0.3
+SHORT_AUDIO_SECONDS = 30.0
+
+
+def _load_mono(audio_path: str | Path) -> tuple[np.ndarray, int]:
+    """Read a wav as mono float32 at the model's sample rate."""
+    data, rate = sf.read(str(audio_path), dtype="float32", always_2d=True)
+    mono = data.mean(axis=1)
+    if rate != SAMPLE_RATE:
+        # Linear resample: adequate for 16 kHz speech and avoids pulling in a
+        # resampling dependency just for the rare non-16k file.
+        target_len = int(round(len(mono) * SAMPLE_RATE / rate))
+        mono = np.interp(
+            np.linspace(0.0, len(mono), target_len, endpoint=False),
+            np.arange(len(mono)),
+            mono,
+        ).astype("float32")
+        rate = SAMPLE_RATE
+    return mono, rate
+
+
+def speech_windows(
+    audio: np.ndarray,
+    sample_rate: int = SAMPLE_RATE,
+    *,
+    max_window: float = MAX_WINDOW_SECONDS,
+    threshold: float = VAD_THRESHOLD,
+) -> list[tuple[float, float]]:
+    """Speech spans merged into windows of at most max_window seconds.
+
+    Cuts fall in silence between VAD spans wherever possible; a single speech
+    span longer than the cap is split hard, since the encoder cannot see more
+    than 30 s at once either way.
+    """
+    model, utils = torch.hub.load(
+        repo_or_dir="snakers4/silero-vad", model="silero_vad",
+        force_reload=False, onnx=False, verbose=False,
+    )
+    get_speech_timestamps = utils[0]
+    spans = get_speech_timestamps(
+        torch.from_numpy(audio), model, sampling_rate=sample_rate, threshold=threshold
+    )
+    if not spans:
+        return []
+
+    windows: list[tuple[float, float]] = []
+    start = end = None
+    for span in spans:
+        span_start = span["start"] / sample_rate
+        span_end = span["end"] / sample_rate
+        while span_end - span_start > max_window:
+            windows.append((span_start, span_start + max_window))
+            span_start += max_window
+        if start is None:
+            start, end = span_start, span_end
+        elif span_end - start <= max_window:
+            end = span_end
+        else:
+            windows.append((start, end))
+            start, end = span_start, span_end
+    if start is not None:
+        windows.append((start, end))
+    return windows
+
+
+def transcribe_windowed(
+    model: CrisperWhisperModel,
+    audio_path: str | Path,
+    *,
+    language: str = "en",
+    speculative_decoding: bool = False,
+    max_window: float = MAX_WINDOW_SECONDS,
+) -> dict[str, Any]:
+    """Transcribe by short-form windows, offsetting each window's timestamps.
+
+    Every window is under the 30 s encoder limit, so the model's longform
+    stitching -- which drops most of the transcript on this corpus -- is never
+    engaged.
+    """
+    audio, rate = _load_mono(audio_path)
+    duration = len(audio) / rate
+    windows = speech_windows(audio, rate, max_window=max_window)
+    if not windows:
+        logger.warning("No speech detected in %s", audio_path)
+        return {
+            "text": "", "language": language, "duration": duration,
+            "processing_time": 0.0, "words": [],
+        }
+
+    logger.info(
+        "Transcribing %s in %d window(s) (%.0f s)", Path(audio_path).name, len(windows), duration
+    )
+    words: list[dict] = []
+    pieces: list[str] = []
+    import time
+
+    started = time.time()
+    for index, (start, end) in enumerate(windows, start=1):
+        lo = max(0.0, start - WINDOW_PAD_SECONDS)
+        hi = min(duration, end + WINDOW_PAD_SECONDS)
+        clip = audio[int(lo * rate):int(hi * rate)]
+        if clip.size == 0:
+            continue
+        try:
+            result = model.transcribe(
+                clip, sr=rate, language=language, mode="verbatim",
+                word_timestamps=True, speculative_decoding=speculative_decoding,
+            )
+        except Exception:
+            logger.exception("  window %d/%d failed; skipping", index, len(windows))
+            continue
+        if result.text:
+            pieces.append(result.text.strip())
+        for word in result.words or []:
+            # Clamp into the unpadded window so the pad cannot let a word from
+            # the neighbouring window be emitted twice.
+            word_start = lo + float(word.start)
+            word_end = lo + float(word.end)
+            if word_end < start or word_start > end:
+                continue
+            words.append({
+                "word": word.word,
+                "start": max(word_start, 0.0),
+                "end": max(word_end, word_start),
+            })
+        if index % 25 == 0 or index == len(windows):
+            logger.info("  window %d/%d", index, len(windows))
+
+    words.sort(key=lambda w: w["start"])
+    return {
+        "text": " ".join(pieces),
+        "language": language,
+        "duration": duration,
+        "processing_time": time.time() - started,
+        "words": words,
+    }
 
 
 def load_model(
@@ -45,8 +208,14 @@ def transcribe(
     *,
     language: str = "en",
     speculative_decoding: bool = True,
+    longform: str = "windowed",
 ) -> dict[str, Any]:
     """Transcribe a wav file in verbatim mode with word-level timestamps.
+
+    longform selects how audio over 30 s is handled: "windowed" (default)
+    transcribes sub-30 s speech windows and offsets their timestamps;
+    "continuation" uses the model's own longform strategy, which drops most of
+    the transcript on this corpus (see the module docstring).
 
     Returns a plain dict:
         {
@@ -58,6 +227,16 @@ def transcribe(
         }
     """
     audio_path = Path(audio_path)
+
+    if longform == "windowed":
+        with sf.SoundFile(str(audio_path)) as handle:
+            duration = len(handle) / handle.samplerate
+        if duration > SHORT_AUDIO_SECONDS:
+            return transcribe_windowed(
+                model, audio_path, language=language,
+                speculative_decoding=speculative_decoding,
+            )
+
     logger.info("Transcribing %s", audio_path)
     result = model.transcribe(
         str(audio_path),
