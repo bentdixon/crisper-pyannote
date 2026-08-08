@@ -38,6 +38,7 @@ import json
 import logging
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "finetune"))
@@ -237,7 +238,7 @@ def score_visit(turns: list[dict], words: list[dict]) -> dict | None:
 
 # --- system adapters --------------------------------------------------------
 
-def load_chirp(visit: Path, _root: Path | None) -> list[dict] | None:
+def load_chirp(visit: Path, _root: Path | None = None, _relative: Path | None = None) -> list[dict] | None:
     found = sorted((visit / "chirp").glob("*.json"))
     if not found:
         return None
@@ -315,6 +316,8 @@ def main(argv: list[str] | None = None) -> int:
 
     per_visit: dict[str, dict] = {}
     scores: dict[str, list[dict]] = {name: [] for name, _, _ in systems}
+    adapter_errors: dict[str, Counter] = {name: Counter() for name, _, _ in systems}
+    missing: Counter = Counter()
 
     for index, visit in enumerate(visits, start=1):
         relative = visit.relative_to(cohort)
@@ -336,11 +339,17 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         for name, adapter, root in systems:
+            # A bare "except -> no data" here once hid a TypeError in an
+            # adapter signature, and the system silently scored zero visits
+            # while looking merely absent. Failures are counted and reported.
             try:
                 words = adapter(visit, root, relative)
-            except Exception:
+            except Exception as error:
+                adapter_errors[name][type(error).__name__ + f": {error}"] += 1
                 words = None
             if not words:
+                if words is None:
+                    missing[name] += 1
                 continue
             result = score_visit(turns, words)
             if result is None:
@@ -353,6 +362,19 @@ def main(argv: list[str] | None = None) -> int:
             }
         if index % 10 == 0 or index == len(visits):
             logger.info("  %d/%d visits", index, len(visits))
+
+    for name in adapter_errors:
+        if adapter_errors[name]:
+            logger.error(
+                "%s: adapter raised on %d visit(s): %s",
+                name, sum(adapter_errors[name].values()),
+                dict(adapter_errors[name].most_common(3)),
+            )
+        if not scores[name]:
+            logger.error(
+                "%s: scored 0 visits (%d with no output) -- not a result, a failure",
+                name, missing[name],
+            )
 
     def mean(values):
         values = [v for v in values if v is not None]
