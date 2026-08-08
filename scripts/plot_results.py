@@ -79,11 +79,19 @@ SYSTEMS = [
     ),
 ]
 
+# (title, per-visit key, aggregate key, direction, caption)
 METRICS = [
-    ("WER", "wer", "lower is better", "word error rate, filled pauses removed"),
-    ("sWER", "swer", "lower is better", "speaker-attributed WER (word misattribution)"),
-    ("DER", "der", "lower is better", "diarization error rate"),
-    ("QTP-F1", "qtp_f1", "higher is better", "qualifier / temporal cue preservation"),
+    ("WER", "wer", "WER", "lower is better", "word error rate, filled pauses removed"),
+    ("sWER", "swer", "sWER", "lower is better", "speaker-attributed WER (word misattribution)"),
+    ("DER", "der", "DER", "lower is better", "diarization error rate, granularity-matched spans"),
+    (
+        "DER confusion",
+        "der_confusion",
+        "DER_confusion",
+        "lower is better",
+        "speaker-attribution error alone, no speech/non-speech term",
+    ),
+    ("QTP-F1", "qtp_f1", "QTP_F1", "higher is better", "qualifier / temporal cue preservation"),
 ]
 
 
@@ -264,8 +272,7 @@ def build_page(data: dict, font_b64: str) -> str:
     subset = common_subset(per_visit, present)
 
     panels = []
-    for title, key, direction, caption in METRICS:
-        agg_key = {"wer": "WER", "swer": "sWER", "der": "DER", "qtp_f1": "QTP_F1"}[key]
+    for title, key, agg_key, direction, caption in METRICS:
         values = {n: aggregate.get(n, {}).get(agg_key) for n in present}
         raw = collect(per_visit, key)
         spreads = {n: quartiles(raw.get(n, [])) for n in present}
@@ -283,16 +290,33 @@ def build_page(data: dict, font_b64: str) -> str:
             f'{escape(label)}<span class="note">{escape(note)}</span></td>',
             f'<td class="num">{stats.get("visits", 0)}</td>',
         ]
-        for _, key, _, _ in METRICS:
-            agg_key = {"wer": "WER", "swer": "sWER", "der": "DER", "qtp_f1": "QTP_F1"}[key]
+        for _, _, agg_key, _, _ in METRICS:
             value = stats.get(agg_key)
             cells.append(f'<td class="num">{value:.4f}</td>' if value is not None else '<td class="num">-</td>')
-        for _, key, _, _ in METRICS:
+        for _, key, _, _, _ in METRICS:
             value = subset_mean(per_visit, subset, name, key)
             cells.append(f'<td class="num sub">{value:.4f}</td>' if value is not None else '<td class="num sub">-</td>')
         rows.append("<tr>" + "".join(cells) + "</tr>")
 
     metric_heads = "".join(f"<th>{escape(t)}</th>" for t, *_ in METRICS)
+
+    # The old word-span DER is shown next to the corrected one so the metric
+    # change is visible in the report rather than only in the commit log.
+    der_rows = []
+    for name, label_parts, colour, _ in SYSTEMS:
+        if name not in aggregate:
+            continue
+        stats = aggregate[name]
+        old, new = stats.get("DER_word_level"), stats.get("DER")
+        if old is None or new is None:
+            continue
+        der_rows.append(
+            f'<tr><td class="sys"><span class="swatch" style="background:{colour}"></span>'
+            f'{escape(" + ".join(label_parts))}</td>'
+            f'<td class="num">{old:.4f}</td><td class="num">{new:.4f}</td>'
+            f'<td class="num">{stats.get("DER_confusion", float("nan")):.4f}</td>'
+            f'<td class="num">{stats.get("no_timestamps", 0)}</td></tr>'
+        )
 
     return f"""<title>Transcription system evaluation</title>
 <style>
@@ -362,6 +386,8 @@ th:first-child, td:first-child {{ text-align: left; }}
 .caveats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 22px 40px; }}
 .caveat h3 {{ font-size: 14px; font-weight: 600; margin: 0 0 5px; }}
 .caveat p {{ font-size: 13.5px; line-height: 1.6; color: var(--muted-dark); margin: 0; max-width: 60ch; }}
+.prose {{ font-size: 14px; line-height: 1.65; color: var(--muted-dark); max-width: 68ch; margin: 0 0 20px; }}
+.prose em {{ font-style: italic; color: var(--text); }}
 footer {{ margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--grid); font-size: 12px; color: var(--muted); }}
 </style>
 
@@ -393,6 +419,27 @@ footer {{ margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--grid)
       <tr><th>System</th><th>Visits</th>{metric_heads}{metric_heads}</tr>
     </thead>
     <tbody>{"".join(rows)}</tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2>Why DER was recomputed</h2>
+  <p class="prose">The human transcripts carry turn <em>start</em> times only, so each
+  turn's end is synthesized from the next turn's start. The reference therefore tiles
+  the whole recording and declares no non-speech: measured across six sessions, false
+  alarm was exactly 0.000 &mdash; nothing can be a false alarm when the reference calls
+  every instant speech &mdash; while missed detection accounted for 0.41&ndash;0.63 of a
+  0.54&ndash;0.76 DER and real speaker confusion for only 0.10&ndash;0.27. Scored that
+  way, DER ranked systems by how much of the timeline their segments covered, penalising
+  word-level output against systems that emit contiguous turns. The hypothesis is now
+  built by the reference's own rule &mdash; same-speaker words grouped into turns, each
+  extended to the next word's start &mdash; so both sides tile the timeline and only
+  label disagreement moves the number.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>System</th><th>DER, word spans (old)</th><th>DER, matched (new)</th><th>Confusion only</th><th>No timestamps</th></tr></thead>
+    <tbody>{"".join(der_rows)}</tbody>
   </table>
   </div>
 </section>
