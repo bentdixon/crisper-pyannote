@@ -19,6 +19,7 @@ RELAY_LOG="/private/tmp/claude-501/-Users-benjamindixon-crisper-whisper-2/00b6cd
 prev_stage=""
 prev_errors=-1
 prev_transfer=""
+prev_stalled=""
 ticks=0
 
 remote() {
@@ -34,7 +35,7 @@ while true; do
     \$(find outputs/verbatimize -name transcript.json 2>/dev/null | wc -l) \
     \$(find baseline/outputs -name '*_transcript.txt' 2>/dev/null | wc -l) \
     \$(find . -name '*_transcript_corrected.txt' 2>/dev/null | wc -l) \
-    \$((\$(pgrep -cf '[r]un_cohort.py') + \$(pgrep -cf '[r]un_baseline.py') + \$(pgrep -cf '[a]pply_llm_corrections'))) \
+    \$((\$(pgrep -cf '[r]un_cohort.py') + \$(pgrep -cf '[r]un_baseline.py') + \$(pgrep -cf '[a]pply_llm_corrections') + \$(pgrep -cf '[e]valuate_systems.py'))) \
     \$(test -f outputs/results.json && echo yes || echo no)")
 
   if [ -z "$state" ]; then
@@ -74,10 +75,20 @@ while true; do
   fi
   prev_errors=$errors
 
-  # 5. everything stopped but nothing produced -> stalled
+  # 5. everything stopped but nothing produced -> stalled.
+  # Reported once per transition, not every tick, so a genuine stall does not
+  # bury the events that follow it. The worker count above must include every
+  # stage that can legitimately be the only thing running -- scoring included,
+  # or a long scoring pass reads as a stall.
   if [ "$workers" -eq 0 ] && [ "$transfer" = "finished" ] && [ "$done_flag" = "no" ]; then
+    stalled="yes"
+  else
+    stalled="no"
+  fi
+  if [ "$stalled" = "yes" ] && [ "$stalled" != "$prev_stalled" ]; then
     echo "STALLED: no workers running, transfer finished, no results.json (ours=$ours verb=$verb base=$base llm=$llm)"
   fi
+  prev_stalled="$stalled"
 
   # 6. heartbeat every 30 min
   if [ $((ticks % 6)) -eq 0 ]; then
