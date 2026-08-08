@@ -37,13 +37,46 @@ WINNER = "#1baf7a"
 # Per-system colour is held constant across every panel so a system can be
 # tracked by eye between charts. Green is deliberately NOT a system colour --
 # the design language reserves it for the winner marker.
+# Every label names the ASR model, then the diarization system, then the LLM
+# reviewer when one is used, joined by "+" so the composition of each system is
+# readable without reference to the prose.
 SYSTEMS = [
-    ("chirp3", "Chirp-3", "#898781", "incumbent ASR + diarization"),
-    ("verbatimize", "Chirp-3 + CW2 verbatimize", "#e87ba4", "Chirp text, CW2 disfluencies"),
-    ("ours", "CW2 + community-1", "#2a78d6", "our pipeline"),
-    ("ours_llm", "CW2 + community-1 + LLM", "#7fb0e8", "our pipeline, LLM review"),
-    ("baseline", "CW2 + pyannote 3.1", "#eda100", "other team's pipeline"),
-    ("baseline_llm", "CW2 + pyannote 3.1 + LLM", "#f5cc6b", "their pipeline, LLM review"),
+    (
+        "chirp3",
+        ["Chirp-3 ASR", "Chirp-3 diarization"],
+        "#898781",
+        "incumbent, as delivered by the bucket",
+    ),
+    (
+        "verbatimize",
+        ["Chirp-3 ASR", "CrisperWhisper 2.0 verbatimize", "Chirp-3 diarization"],
+        "#e87ba4",
+        "Chirp text kept, disfluencies inserted by CW2",
+    ),
+    (
+        "ours",
+        ["CrisperWhisper 2.0 ASR", "pyannote community-1"],
+        "#2a78d6",
+        "our pipeline",
+    ),
+    (
+        "ours_llm",
+        ["CrisperWhisper 2.0 ASR", "pyannote community-1", "Qwen2.5-7B-Instruct"],
+        "#7fb0e8",
+        "our pipeline, LLM review applied",
+    ),
+    (
+        "baseline",
+        ["CrisperWhisper 2.0 ASR", "pyannote 3.1"],
+        "#eda100",
+        "other team's pipeline, ported to CW2",
+    ),
+    (
+        "baseline_llm",
+        ["CrisperWhisper 2.0 ASR", "pyannote 3.1", "Qwen2.5-7B-Instruct"],
+        "#f5cc6b",
+        "their pipeline, LLM review applied",
+    ),
 ]
 
 METRICS = [
@@ -111,12 +144,18 @@ def bar_panel(
     bars. Gridlines sit on the value axis only and are drawn before the bars
     so the data reads on top of them.
     """
-    rows = [(n, label, colour) for n, label, colour, _ in SYSTEMS if n in present]
+    rows = [(n, parts, colour) for n, parts, colour, _ in SYSTEMS if n in present]
     if not rows:
         return ""
 
-    row_h, gap, pad_l, pad_r, pad_t, pad_b = 30, 10, 172, 46, 14, 30
-    plot_w = 320
+    # Labels are multi-line (one component per line), so the row has to be tall
+    # enough for the longest label and the label gutter wide enough for the
+    # longest component -- otherwise names silently overlap or clip.
+    line_h = 14
+    max_lines = max(len(parts) for _, parts, _ in rows)
+    row_h = max(30, max_lines * line_h + 6)
+    gap, pad_l, pad_r, pad_t, pad_b = 12, 250, 52, 14, 30
+    plot_w = 300
     height = pad_t + len(rows) * (row_h + gap) + pad_b
     width = pad_l + plot_w + pad_r
 
@@ -153,13 +192,20 @@ def bar_panel(
             f'class="tick">{value:.2f}</text>'
         )
 
-    for index, (name, label, colour) in enumerate(rows):
+    for index, (name, label_parts, colour) in enumerate(rows):
         y = pad_t + index * (row_h + gap)
         value = values.get(name)
-        parts.append(
-            f'<text x="{pad_l - 10}" y="{y + row_h / 2 + 4}" text-anchor="end" '
-            f'class="cat">{escape(label)}</text>'
-        )
+
+        # One component per line, "+" kept at the end of the preceding line so
+        # the composition reads as a chain rather than a list.
+        block_h = len(label_parts) * line_h
+        first_y = y + (row_h - block_h) / 2 + line_h - 3
+        for line_index, component in enumerate(label_parts):
+            suffix = " +" if line_index < len(label_parts) - 1 else ""
+            parts.append(
+                f'<text x="{pad_l - 24}" y="{first_y + line_index * line_h:.1f}" '
+                f'text-anchor="end" class="cat">{escape(component + suffix)}</text>'
+            )
         if value is None:
             parts.append(
                 f'<text x="{pad_l + 6}" y="{y + row_h / 2 + 4}" class="tick">not scored</text>'
@@ -192,7 +238,7 @@ def bar_panel(
         )
         if name == best:
             parts.append(
-                f'<circle cx="{pad_l - 18}" cy="{y + row_h / 2}" r="4" fill="{WINNER}"/>'
+                f'<circle cx="{pad_l - 12}" cy="{y + row_h / 2}" r="4" fill="{WINNER}"/>'
             )
 
     parts.append(
@@ -227,10 +273,11 @@ def build_page(data: dict, font_b64: str) -> str:
 
     # coverage + common-subset table
     rows = []
-    for name, label, colour, note in SYSTEMS:
+    for name, label_parts, colour, note in SYSTEMS:
         if name not in aggregate:
             continue
         stats = aggregate[name]
+        label = " + ".join(label_parts)
         cells = [
             f'<td class="sys"><span class="swatch" style="background:{colour}"></span>'
             f'{escape(label)}<span class="note">{escape(note)}</span></td>',
