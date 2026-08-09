@@ -332,6 +332,81 @@ Systems scored against the human transcripts with the DIALOG-DeID metrics, all
 over the complete 269-visit cohort: chirp3, verbatimize, ours (community-1),
 ours_llm, baseline (pyannote 3.1), baseline_llm. Sweeps all reached 269/269.
 
+Final numbers, after the longform ASR fix below (`outputs/results.json`):
+
+    system         visits     WER    sWER     DER  DERconf  QTP-F1
+    chirp3            269  0.8748  0.7121  0.6907   0.2071  0.8388
+    verbatimize       269  0.8751  0.6747  0.6346   0.2108  0.8463
+    ours              269  0.8374  0.8347  0.2242   0.2146  0.8790
+    ours_llm          269  0.8385  0.8700  0.2254   0.2157  0.8780
+    baseline          269  0.8670  0.5174  0.2054   0.1774  0.8711
+    baseline_llm      269  0.8670  0.5231  0.2072   0.1793  0.8701
+
+Readings that survive scrutiny:
+
+- **pyannote 3.1 beats community-1 on speaker attribution**: sWER 0.517 vs
+  0.835, confusion 0.177 vs 0.215. This held after the ASR fix (community-1
+  had previously been judged on a transcript missing a third of its words),
+  though the confusion gap narrowed from 0.331 to 0.215.
+- **community-1 leads QTP-F1** (0.879, best in table) and marginally WER, so
+  it is not strictly dominated.
+- **The LLM review is worse on every metric for both trees, 269/269 visits.**
+  Never better, not once. Its speaker flags also carry fabricated
+  justifications (one flagged a turn for "contains '?' and starts with 'how
+  often'" when it contained neither) and only 15 of 163 applied. Drop it.
+- All six systems now sit at 1.33-1.36 hypothesis words per reference word.
+  That agreement is the check that matters: ours and chirp3 match to three
+  decimals while sharing no code.
+
+### The longform ASR bug -- ours was transcribing 34% less audio
+
+Do not use `model.transcribe()` directly on a full session. CrisperWhisper's
+default `longform_strategy="continuation"` drops most of the transcript on this
+corpus. On a 1094 s interview:
+
+    continuation (default, stride 26)   651 words   <- what we shipped
+    ... stride 20                       802
+    ... stride 15                      1203
+    chunked_lcs                        1637        (no word timestamps)
+    other team's VAD segments          1752
+    Chirp-3                           ~1730
+    windowed short-form (the fix)      1725
+
+Each 30 s chunk emitted only ~16 words regardless of stride, where dense speech
+gives 60-90, so chunks were ending early and a smaller stride merely packed in
+more of them. Every other knob was inert (hallucination_mitigation 654,
+max_new_tokens 448 -> 655, boundary drop off 658) and disabling
+early_eot_recovery made it *worse* (616). The same audio cut into 25 s clips and
+transcribed in isolation came back complete, so the loss is in stitching, not
+decoding.
+
+The trap: `continuation` is both the model default and the only strategy that
+implements `word_timestamps=True`, which this whole design rests on --
+`chunked_lcs`/`token_lcs` raise NotImplementedError. So the only usable strategy
+was the broken one, and it fails silently with no warning.
+
+Fix in `asr.py`: audio over 30 s is split on silero VAD into <=25 s windows,
+transcribed short-form, and each window's timestamps offset back onto the
+session clock. Cohort-wide this moved ours from 0.656 to 0.973 of baseline's
+word count (median per visit 0.975, min 0.833, none below 0.80; previously as
+low as 0.01). The old path remains as `longform="continuation"`; the pre-fix
+outputs are kept at `outputs/ours_continuation_broken/` for audit.
+
+Consequence for reading older notes: ours' *apparent* WER win of 0.7005 was an
+artifact of under-transcribing -- fewer words means fewer insertions against a
+semi-verbatim reference. Corrected, it is 0.8374 and the system is better, not
+worse. Any metric computed before 2026-08-08 21:40 on the ours/ours_llm trees
+is invalid.
+
+Two data defects, not pipeline defects:
+
+- `PronetGA/GA06750/day0088_session001`: 25 words for a 2037 s file, unchanged
+  by the fix; the other team's pipeline finds 30. The audio is near-silent or
+  corrupt. It drags every system equally.
+- A tail of visits at 0.83-0.87 of baseline's word count (HA32687 twice,
+  CA09370, YA03473, CA00152) where VAD may be clipping quiet speech. Not
+  distorting the comparison; worth a look if that tail matters.
+
 ### DER as first written was invalid -- do not revert it
 
 `load_timestamped_text` synthesizes each turn's end from the *next* turn's
