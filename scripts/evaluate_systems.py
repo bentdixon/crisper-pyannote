@@ -284,8 +284,25 @@ def score_visit(turns: list[dict], words: list[dict]) -> dict | None:
             )
         )
 
+    # WER split into its three error types, each as a rate over reference words
+    # so they sum to WER. This is what makes the column readable here: the ASR
+    # is verbatim and the reference semi-verbatim, so every system emits ~1.33
+    # words per reference word and insertions carry most of the total. Without
+    # the split, "transcribed a filler the human omitted" is indistinguishable
+    # from "misheard the word".
+    reference_length = len(reference_text.split()) or 1
+    substitutions = pooled.substitutions / reference_length
+    deletions = pooled.deletions / reference_length
+    insertions = pooled.insertions / reference_length
+
     return {
         "wer": pooled.wer,
+        "wer_sub": substitutions,
+        "wer_del": deletions,
+        "wer_ins": insertions,
+        # WER with insertions removed: how much of the reference was actually
+        # got wrong or missed, unaffected by the verbatim/semi-verbatim gap.
+        "wer_no_ins": substitutions + deletions,
         "swer": float(np.mean(stream_wers)) if stream_wers else None,
         "der": der,
         "der_confusion": der_confusion,
@@ -449,6 +466,10 @@ def main(argv: list[str] | None = None) -> int:
         aggregate[name] = {
             "visits": len(results),
             "WER": mean([r["wer"] for r in results]),
+            "WER_sub": mean([r.get("wer_sub") for r in results]),
+            "WER_del": mean([r.get("wer_del") for r in results]),
+            "WER_ins": mean([r.get("wer_ins") for r in results]),
+            "WER_no_ins": mean([r.get("wer_no_ins") for r in results]),
             "sWER": mean([r["swer"] for r in results]),
             "DER": mean([r["der"] for r in results]),
             "DER_confusion": mean([r.get("der_confusion") for r in results]),
@@ -460,16 +481,17 @@ def main(argv: list[str] | None = None) -> int:
         }
 
     print(
-        f"\n  {'system':16s} {'visits':>6} {'WER':>8} {'sWER':>8} {'DER':>8} "
-        f"{'DERconf':>8} {'DERword':>8} {'QTP-F1':>8} {'no_ts':>6}"
+        f"\n  {'system':16s} {'visits':>6} {'WER':>8} {'sub':>7} {'del':>7} {'ins':>7} "
+        f"{'WERnoIns':>9} {'sWER':>8} {'DER':>8} {'DERconf':>8} {'QTP-F1':>8}"
     )
     for name, stats in aggregate.items():
         def show(key, spec=".4f"):
-            return format(stats[key], spec) if stats[key] is not None else "-"
+            return format(stats[key], spec) if stats.get(key) is not None else "-"
         print(
-            f"  {name:16s} {stats['visits']:6d} {show('WER'):>8} {show('sWER'):>8} "
-            f"{show('DER'):>8} {show('DER_confusion'):>8} {show('DER_word_level'):>8} "
-            f"{show('QTP_F1'):>8} {stats['no_timestamps']:6d}"
+            f"  {name:16s} {stats['visits']:6d} {show('WER'):>8} {show('WER_sub'):>7} "
+            f"{show('WER_del'):>7} {show('WER_ins'):>7} {show('WER_no_ins'):>9} "
+            f"{show('sWER'):>8} {show('DER'):>8} {show('DER_confusion'):>8} "
+            f"{show('QTP_F1'):>8}"
         )
 
     if args.output:
