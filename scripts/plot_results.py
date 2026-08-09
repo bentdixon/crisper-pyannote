@@ -248,35 +248,33 @@ def chart_svg(
             )
             continue
 
-        bw = max(x(value) - pad_l, 1)
-        parts.append(
-            f'<rect x="{pad_l}" y="{y}" width="{bw:.1f}" height="{row_h}" '
-            f'rx="3" fill="{colour}"/>'
-        )
-
+        # A dot-and-range, not a bar. These per-visit distributions are heavily
+        # right-skewed -- a few catastrophic visits drag the mean past the p75
+        # (chirp3 DER: mean 0.691, p75 0.337) -- so a bar growing from zero both
+        # overstates the typical visit and collides with the range drawn across
+        # it, which reads as a strike-through rather than a spread. The median
+        # dot carries "typical", the range carries spread, and the hollow mean
+        # marker makes the skew legible as the gap between the two.
+        cy = y + row_h / 2
         spread = spreads.get(name)
         if spread:
             low, median, high = spread
             lo, hi = x(low), x(high)
-            cy = y + row_h / 2
             parts.append(
                 f'<line x1="{lo:.1f}" y1="{cy}" x2="{hi:.1f}" y2="{cy}" '
-                f'stroke="{MUTED_DARK}" stroke-width="1.2" opacity="0.55"/>'
+                f'stroke="{colour}" stroke-width="4" opacity="0.4" stroke-linecap="round"/>'
             )
             for cap in (lo, hi):
                 parts.append(
-                    f'<line x1="{cap:.1f}" y1="{cy - 5}" x2="{cap:.1f}" y2="{cy + 5}" '
-                    f'stroke="{MUTED_DARK}" stroke-width="1.2" opacity="0.55"/>'
+                    f'<line x1="{cap:.1f}" y1="{cy - 6}" x2="{cap:.1f}" y2="{cy + 6}" '
+                    f'stroke="{colour}" stroke-width="1.6" opacity="0.8"/>'
                 )
-            # Median tick. Where it sits far from the bar's end, the mean is
-            # being carried by a tail rather than describing a typical session.
-            mx = x(median)
-            parts.append(
-                f'<line x1="{mx:.1f}" y1="{y + 3}" x2="{mx:.1f}" y2="{y + row_h - 3}" '
-                f'stroke="#ffffff" stroke-width="3"/>'
-                f'<line x1="{mx:.1f}" y1="{y + 3}" x2="{mx:.1f}" y2="{y + row_h - 3}" '
-                f'stroke="{TEXT}" stroke-width="1.4"/>'
-            )
+            parts.append(f'<circle cx="{x(median):.1f}" cy="{cy}" r="5.5" fill="{colour}"/>')
+
+        parts.append(
+            f'<circle cx="{x(value):.1f}" cy="{cy}" r="4.5" fill="#ffffff" '
+            f'stroke="{MUTED_DARK}" stroke-width="1.6"/>'
+        )
 
         # Value in a fixed right-hand column rather than at the bar's end: the
         # p25-p75 whisker often extends past the bar, and a label placed by bar
@@ -300,13 +298,16 @@ def chart_svg(
         parts.append(
             f'<line x1="0" y1="{height - 26}" x2="{width}" y2="{height - 26}" '
             f'stroke="{GRIDLINE}" stroke-width="1"/>'
-            f'<circle cx="4" cy="{ly - 4}" r="4" fill="{WINNER}"/>'
-            f'<text x="14" y="{ly}" class="leg">best</text>'
-            f'<rect x="62" y="{ly - 9}" width="2" height="11" fill="{TEXT}"/>'
-            f'<text x="70" y="{ly}" class="leg">bar = mean, tick = median</text>'
-            f'<line x1="228" y1="{ly - 4}" x2="248" y2="{ly - 4}" '
-            f'stroke="{MUTED_DARK}" stroke-width="1.2" opacity="0.6"/>'
-            f'<text x="254" y="{ly}" class="leg">p25-p75 across visits</text>'
+            f'<circle cx="5" cy="{ly - 4}" r="5" fill="{MUTED}"/>'
+            f'<text x="15" y="{ly}" class="leg">median visit</text>'
+            f'<circle cx="98" cy="{ly - 4}" r="4.5" fill="#ffffff" '
+            f'stroke="{MUTED_DARK}" stroke-width="1.6"/>'
+            f'<text x="108" y="{ly}" class="leg">mean (value shown)</text>'
+            f'<line x1="228" y1="{ly - 4}" x2="252" y2="{ly - 4}" '
+            f'stroke="{MUTED}" stroke-width="4" opacity="0.4" stroke-linecap="round"/>'
+            f'<text x="258" y="{ly}" class="leg">middle 50% of visits</text>'
+            f'<circle cx="382" cy="{ly - 4}" r="4" fill="{WINNER}"/>'
+            f'<text x="392" y="{ly}" class="leg">best</text>'
         )
 
     parts.append("</svg>")
@@ -439,8 +440,12 @@ svg .tick {{ font-family: 'DM Sans', sans-serif; font-size: 10px; font-weight: 5
 .legend {{ display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 12.5px; color: var(--muted-dark); margin-top: 14px; }}
 .legend span {{ display: inline-flex; align-items: center; gap: 7px; }}
 .dot {{ width: 9px; height: 9px; border-radius: 50%; background: var(--winner); }}
-.whisker {{ width: 22px; height: 1px; background: var(--muted-dark); opacity: 0.6; }}
-.bartick {{ width: 2px; height: 12px; background: var(--text); }}
+.meddot {{ width: 11px; height: 11px; border-radius: 50%; background: var(--muted); }}
+.meandot {{
+  width: 10px; height: 10px; border-radius: 50%; background: var(--ground);
+  border: 1.6px solid var(--muted-dark);
+}}
+.whisker {{ width: 24px; height: 4px; border-radius: 2px; background: var(--muted); opacity: 0.4; }}
 .tablewrap {{ overflow-x: auto; }}
 table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
 th, td {{ text-align: right; padding: 9px 12px; border-bottom: 1px solid var(--grid); white-space: nowrap; }}
@@ -477,9 +482,10 @@ footer {{ margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--grid)
   <h2>Metrics by system</h2>
   <div class="grid">{"".join(panels)}</div>
   <div class="legend">
+    <span><span class="meddot"></span>median visit</span>
+    <span><span class="meandot"></span>mean (the value shown)</span>
+    <span><span class="whisker"></span>middle 50% of visits (p25&ndash;p75)</span>
     <span><span class="dot"></span>best on this metric</span>
-    <span><span class="bartick"></span>bar = mean, tick = median</span>
-    <span><span class="whisker"></span>p25&ndash;p75 across visits</span>
   </div>
 </section>
 
@@ -540,11 +546,14 @@ footer {{ margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--grid)
       time overlap, so it captures misattribution that WER hides.</p>
     </div>
     <div class="caveat">
-      <h3>Means are dragged by a tail; read the median tick</h3>
-      <p>Several systems have a mean past their own p75, carried by a minority of
-      catastrophic visits rather than typical performance. Where the tick sits far
-      inside the bar, the mean is describing that tail. Where two bars differ by
-      less than the whiskers, the ranking between them is not established.</p>
+      <h3>Read the median dot, not the mean</h3>
+      <p>These distributions are strongly right-skewed: a minority of catastrophic
+      visits drags the mean well above typical performance, and in several cases
+      past the system's own p75 &mdash; Chirp-3's mean DER is 0.691 while its median
+      visit is 0.216. The wider the gap between the hollow mean marker and the
+      filled median dot, the more the headline figure is describing that tail.
+      Where two systems' ranges overlap substantially, the ranking between them is
+      not established.</p>
     </div>
   </div>
 </section>
