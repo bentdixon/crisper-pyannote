@@ -28,6 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from plot_results import (  # noqa: E402
+    CAPTIONS,
     GRIDLINE,
     METRICS,
     MUTED,
@@ -167,6 +168,7 @@ svg .cat {{ font-size: 12px; fill: {TEXT}; }}
 svg .val {{ font-size: 11px; fill: {MUTED}; }}
 svg .tick {{ font-size: 10px; fill: {MUTED}; }}
 svg .leg {{ font-size: 11px; fill: {MUTED_DARK}; }}
+svg .figcap {{ font-size: 10.5px; fill: {MUTED}; }}
 </style>
 {outer}
 """
@@ -204,7 +206,8 @@ def main() -> int:
         raw = collect(per_visit, key)
         spreads = {n: quartiles(raw.get(n, [])) for n in present}
         svg, width, height = chart_svg(
-            title, values, spreads, present, direction, caption=caption, standalone=True
+            title, values, spreads, present, direction, caption=caption,
+            standalone=True, footer=CAPTIONS.get(agg_key, ""),
         )
         if not svg:
             continue
