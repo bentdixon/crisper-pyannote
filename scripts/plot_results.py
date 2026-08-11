@@ -479,7 +479,37 @@ def summary_section(aggregate: dict, redaction_data: dict | None,
 </section>"""
 
 
-def taxonomy_svg(data: dict | None) -> tuple[str, int, int]:
+def swatch_legend(items, width: int, y0: int, columns: int = 2) -> tuple[str, int]:
+    """A colour key drawn inside the SVG rather than beside it in HTML.
+
+    The stacked charts carry their legend in page markup, which is fine on the
+    report but leaves an exported figure with unlabelled colours. Anything
+    exported standalone needs its key in the same file.
+    """
+    if not items:
+        return "", 0
+    rows = -(-len(items) // columns)
+    column_width = width / columns
+    out = []
+    for index, (label, colour, note) in enumerate(items):
+        column, row = divmod(index, rows)
+        x = column * column_width
+        y = y0 + row * 17
+        out.append(
+            f'<rect x="{x:.1f}" y="{y - 9}" width="10" height="10" rx="2" fill="{colour}"/>'
+        )
+        # The dash is an entity, not a literal: these files are loaded from
+        # disk by a headless browser, which without a charset declaration reads
+        # UTF-8 as windows-1252 and renders every em dash as "a EUR quote".
+        label_text = escape(label)
+        note_text = f" &#8212; {escape(note)}" if note else ""
+        out.append(
+            f'<text x="{x + 16:.1f}" y="{y}" class="leg">{label_text}{note_text}</text>'
+        )
+    return "".join(out), rows * 17
+
+
+def taxonomy_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
     """Stacked decomposition of WER into edit categories.
 
     The one chart on this page that answers "why is WER so high" rather than
@@ -506,9 +536,22 @@ def taxonomy_svg(data: dict | None) -> tuple[str, int, int]:
 
     top = max(sum(r[2]["rates"].values()) for r in rows) * 1.08 or 1.0
 
+    # The key is laid out first so its height is known before the header is
+    # written; patching a viewBox after the fact is how charts end up cropped.
+    key, key_height = ("", 0)
+    if legend:
+        # One column: these notes are long enough that two columns collide and
+        # the right-hand one runs off the canvas.
+        key, key_height = swatch_legend(
+            list(TAXONOMY_PARTS), width, height + 8, columns=1,
+        )
+        key_height += 14
+    total_height = height + key_height
+
     out = [
-        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
-        f'role="img" aria-label="What the word error rate is made of">'
+        f'<svg viewBox="0 0 {width} {total_height}" width="{width}" '
+        f'height="{total_height}" role="img" '
+        f'aria-label="What the word error rate is made of">'
     ]
     for i in range(6):
         value = top * i / 5
@@ -553,9 +596,11 @@ def taxonomy_svg(data: dict | None) -> tuple[str, int, int]:
 
     out.append(
         f'<line x1="{pad_l}" y1="{pad_t}" x2="{pad_l}" y2="{height - pad_b}" '
-        f'stroke="{AXIS}" stroke-width="1"/></svg>'
+        f'stroke="{AXIS}" stroke-width="1"/>'
     )
-    return "".join(out), width, height
+    out.append(key)
+    out.append("</svg>")
+    return "".join(out), width, total_height
 
 
 def taxonomy_panel(data: dict | None) -> str:
@@ -1202,7 +1247,8 @@ def chart_svg(
     return "".join(parts), width, height
 
 
-def composition_svg(aggregate: dict, present: list[str]) -> tuple[str, int, int]:
+def composition_svg(aggregate: dict, present: list[str],
+                    legend: bool = False) -> tuple[str, int, int]:
     """Stacked WER composition: insertions vs substitutions vs deletions.
 
     WER is the one number on this page that is a sum of parts, so it is the one
@@ -1227,9 +1273,18 @@ def composition_svg(aggregate: dict, present: list[str]) -> tuple[str, int, int]
         sum(aggregate[n].get(k) or 0.0 for _, k, _, _ in WER_PARTS) for n, _, _ in rows
     ) * 1.08 or 1.0
 
+    key, key_height = ("", 0)
+    if legend:
+        key, key_height = swatch_legend(
+            [(label, colour, note) for label, _, colour, note in WER_PARTS],
+            width, height + 8, columns=1,
+        )
+        key_height += 14
+    total_height = height + key_height
+
     out = [
-        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
-        f'role="img" aria-label="WER composition by system">'
+        f'<svg viewBox="0 0 {width} {total_height}" width="{width}" '
+        f'height="{total_height}" role="img" aria-label="WER composition by system">'
     ]
     for i in range(6):
         value = top * i / 5
@@ -1274,9 +1329,11 @@ def composition_svg(aggregate: dict, present: list[str]) -> tuple[str, int, int]
 
     out.append(
         f'<line x1="{pad_l}" y1="{pad_t}" x2="{pad_l}" y2="{height - pad_b}" '
-        f'stroke="{AXIS}" stroke-width="1"/></svg>'
+        f'stroke="{AXIS}" stroke-width="1"/>'
     )
-    return "".join(out), width, height
+    out.append(key)
+    out.append("</svg>")
+    return "".join(out), width, total_height
 
 
 def composition_panel(aggregate: dict, present: list[str]) -> str:

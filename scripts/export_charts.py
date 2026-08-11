@@ -181,7 +181,7 @@ svg .figcap {{ font-size: 10.5px; fill: {MUTED}; }}
 
 
 def titled(title: str, subtitle: str, svg: str, width: int, height: int,
-           caption: str) -> tuple[str, int, int]:
+           caption: str, clean: bool = False) -> tuple[str, int, int]:
     """Wrap a bare chart SVG in the title block and caption the metric charts
     build for themselves.
 
@@ -202,6 +202,11 @@ def titled(title: str, subtitle: str, svg: str, width: int, height: int,
             lines.append(line)
         return lines
 
+    if clean:
+        # "raw metrics and keys": the explanatory paragraph goes, the title,
+        # the direction and the colour key stay -- a figure with no key cannot
+        # be read at all.
+        caption = ""
     head = wrap(subtitle, 82)
     head_h = 40 + len(head) * 15
     foot = wrap(caption, 96)
@@ -228,13 +233,13 @@ def titled(title: str, subtitle: str, svg: str, width: int, height: int,
 
 def extra_figures(data: dict, mono: dict | None, stereo: dict | None,
                   redaction: dict | None, taxonomy: dict | None = None,
-                  ) -> list[tuple[str, str, int, int]]:
+                  clean: bool = False) -> list[tuple[str, str, int, int]]:
     """Figures the report builds as HTML sections, as standalone charts."""
     out = []
     aggregate = data.get("aggregate", {})
     present = [n for n, *_ in __import__("plot_results").SYSTEMS if n in aggregate]
 
-    svg, w, h = taxonomy_svg(taxonomy)
+    svg, w, h = taxonomy_svg(taxonomy, legend=True)
     if svg:
         out.append(("wer-error-types", *titled(
             "What the word error rate is made of",
@@ -247,14 +252,14 @@ def extra_figures(data: dict, mono: dict | None, stereo: dict | None,
             "WER from roughly 12% to roughly 42%. Warm segments are transcription "
             "error: words heard wrong or missed. Cool segments are speech the machine "
             "produced that the transcript does not record, a convention difference "
-            "rather than a failure.",
+            "rather than a failure.", clean=clean,
         )))
 
-    svg, w, h = composition_svg(aggregate, present)
+    svg, w, h = composition_svg(aggregate, present, legend=True)
     if svg:
         out.append(("wer-composition", *titled(
             "What makes up the word error rate", "lower is better",
-            svg, w, h, CAPTIONS["composition"],
+            svg, w, h, CAPTIONS["composition"], clean=clean,
         )))
 
     if mono and stereo:
@@ -274,7 +279,7 @@ def extra_figures(data: dict, mono: dict | None, stereo: dict | None,
                     "stereo containers holding duplicated mono and no system read "
                     "speakers off a channel. This compares recording provenance, not "
                     "channel access, and the shift between conditions is larger than "
-                    "any gap between systems.",
+                    "any gap between systems.", clean=clean,
                 )))
 
     if redaction:
@@ -288,7 +293,7 @@ def extra_figures(data: dict, mono: dict | None, stereo: dict | None,
                 "142 of 269 sessions. Recall is trustworthy because a gold span is real "
                 "PII; precision is a lower bound because only half the transcripts carry "
                 "any annotation, so a genuine identifier nobody marked counts against a "
-                "system that caught it.",
+                "system that caught it.", clean=clean,
             )))
     return out
 
@@ -306,6 +311,14 @@ def main() -> int:
     parser.add_argument("--stereo", default=None, help="results.json for the stereo subset")
     parser.add_argument("--redaction", default=None, help="redaction.json")
     parser.add_argument("--taxonomy", default=None, help="taxonomy.json")
+    parser.add_argument(
+        "--clean", action="store_true",
+        help=(
+            "drop the explanatory caption from every figure, keeping the title, "
+            "the direction and the colour key -- for slides and papers where the "
+            "surrounding text supplies the context"
+        ),
+    )
     parser.add_argument("--scale", type=float, default=2.0, help="PNG device scale")
     parser.add_argument("--chrome", default=CHROME)
     parser.add_argument("--no-png", action="store_true")
@@ -361,19 +374,22 @@ def main() -> int:
         written.append(png_path)
 
     for title, key, agg_key, direction, caption in metrics_for(aggregate):
+        if args.clean:
+            caption = None
         values = {n: aggregate.get(n, {}).get(agg_key) for n in present}
         raw = collect(per_visit, key)
         spreads = {n: quartiles(raw.get(n, [])) for n in present}
         svg, width, height = chart_svg(
             title, values, spreads, present, direction, caption=caption,
-            standalone=True, footer=CAPTIONS.get(agg_key, ""),
+            standalone=True,
+            footer="" if args.clean else CAPTIONS.get(agg_key, ""),
         )
         if not svg:
             continue
 
         emit(slug(title), title, svg, width, height)
 
-    for name, svg, width, height in extra_figures(data, mono, stereo, redaction, taxonomy):
+    for name, svg, width, height in extra_figures(data, mono, stereo, redaction, taxonomy, clean=args.clean):
         emit(name, name.replace('-', ' '), svg, width, height)
 
     for path in written:
