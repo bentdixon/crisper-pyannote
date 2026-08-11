@@ -43,6 +43,7 @@ from plot_results import (  # noqa: E402
     merge_partner,
     metrics_for,
     quartiles,
+    leak_type_svg,
     redaction_svg,
     taxonomy_svg,
 )
@@ -233,7 +234,8 @@ def titled(title: str, subtitle: str, svg: str, width: int, height: int,
 
 def extra_figures(data: dict, mono: dict | None, stereo: dict | None,
                   redaction: dict | None, taxonomy: dict | None = None,
-                  clean: bool = False) -> list[tuple[str, str, int, int]]:
+                  clean: bool = False, leaks: dict | None = None,
+                  ) -> list[tuple[str, str, int, int]]:
     """Figures the report builds as HTML sections, as standalone charts."""
     out = []
     aggregate = data.get("aggregate", {})
@@ -282,6 +284,19 @@ def extra_figures(data: dict, mono: dict | None, stereo: dict | None,
                     "any gap between systems.", clean=clean,
                 )))
 
+    svg, w, h = leak_type_svg(leaks, legend=True)
+    if svg:
+        out.append(("pii-leak-by-type", *titled(
+            "Leak rate by identifier type",
+            "lower is better; share of gold spans surviving verbatim in the output",
+            svg, w, h,
+            "Each gold span is typed by what a system called it when some system caught "
+            "it, pooled across every system and visit, which types 91 of 102 distinct "
+            "surface forms. Only types with at least 20 gold spans get a rate: dates (4) "
+            "and ages (2) are too few. Denominators count only spans whose surface form "
+            "the transcriber left intact.", clean=clean,
+        )))
+
     if redaction:
         svg, w, h = redaction_svg(redaction)
         if svg:
@@ -311,6 +326,7 @@ def main() -> int:
     parser.add_argument("--stereo", default=None, help="results.json for the stereo subset")
     parser.add_argument("--redaction", default=None, help="redaction.json")
     parser.add_argument("--taxonomy", default=None, help="taxonomy.json")
+    parser.add_argument("--leaks", default=None, help="leak_by_type.json")
     parser.add_argument(
         "--clean", action="store_true",
         help=(
@@ -330,6 +346,7 @@ def main() -> int:
     mono = load_results(args.mono)
     stereo = load_results(args.stereo)
     redaction = load_results(args.redaction)
+    leaks = json.loads(Path(args.leaks).read_text()) if args.leaks else None
     taxonomy = json.loads(Path(args.taxonomy).read_text()) if args.taxonomy else None
     aggregate = data.get("aggregate", {})
     per_visit = data.get("per_visit", {})
@@ -389,7 +406,7 @@ def main() -> int:
 
         emit(slug(title), title, svg, width, height)
 
-    for name, svg, width, height in extra_figures(data, mono, stereo, redaction, taxonomy, clean=args.clean):
+    for name, svg, width, height in extra_figures(data, mono, stereo, redaction, taxonomy, clean=args.clean, leaks=leaks):
         emit(name, name.replace('-', ' '), svg, width, height)
 
     for path in written:

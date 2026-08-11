@@ -644,6 +644,138 @@ def taxonomy_panel(data: dict | None) -> str:
 </section>"""
 
 
+# Identifier types with enough gold spans to carry a rate. Dates (4 spans) and
+# ages (2) are reported in the footnote instead: a percentage over four spans
+# moves 25 points per span and would read as a finding.
+LEAK_TYPES = [("name", "#c0392b"), ("location", "#2a78d6")]
+MIN_SPANS_FOR_RATE = 20
+
+
+def leak_type_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
+    """Leak rate per system, split by the kind of identifier that leaked.
+
+    Grouped rather than stacked: these are independent rates over different
+    denominators, not parts of a whole, so stacking them would invent a total
+    that means nothing.
+    """
+    if not data:
+        return "", 0, 0
+    aggregate = data.get("aggregate", {})
+    rows = []
+    for name, parts, colour, _ in SYSTEMS:
+        entry = aggregate.get(registry.label_of(name)) or aggregate.get(name)
+        if not entry:
+            continue
+        by_type = entry.get("by_type", {})
+        values = [
+            (kind, by_type[kind]["leak_rate"], by_type[kind]["spans"], by_type[kind]["leaked"])
+            for kind, _ in LEAK_TYPES
+            if by_type.get(kind) and by_type[kind]["spans"] >= MIN_SPANS_FOR_RATE
+        ]
+        if values:
+            rows.append((parts, values))
+    if not rows:
+        return "", 0, 0
+
+    line_h = 14
+    bar_h = 15
+    max_lines = max(len(p) for p, _ in rows)
+    row_h = max(len(LEAK_TYPES) * (bar_h + 4), max_lines * line_h + 6)
+    gap, pad_l, pad_r, pad_t, pad_b = 16, 250, 66, 18, 32
+    plot_w = 330
+    height = pad_t + len(rows) * (row_h + gap) + pad_b
+
+    key, key_height = ("", 0)
+    if legend:
+        items = []
+        for kind, colour in LEAK_TYPES:
+            spans = next(
+                (v[2] for _, vals in rows for v in vals if v[0] == kind), 0,
+            )
+            items.append((kind, colour, f"{spans} gold spans with a surface form"))
+        key, key_height = swatch_legend(items, plot_w + pad_l, height + 8, columns=1)
+        key_height += 14
+    total_height = height + key_height
+    width = pad_l + plot_w + pad_r
+
+    out = [
+        f'<svg viewBox="0 0 {width} {total_height}" width="{width}" '
+        f'height="{total_height}" role="img" aria-label="Leak rate by identifier type">'
+    ]
+    for i in range(6):
+        value = i / 5
+        gx = round(pad_l + value * plot_w, 1)
+        out.append(
+            f'<line x1="{gx}" y1="{pad_t}" x2="{gx}" y2="{height - pad_b}" '
+            f'stroke="{GRIDLINE}" stroke-width="1"/>'
+            f'<text x="{gx}" y="{height - pad_b + 15}" text-anchor="middle" '
+            f'class="tick">{value * 100:.0f}%</text>'
+        )
+
+    for index, (label_parts, values) in enumerate(rows):
+        y = pad_t + index * (row_h + gap)
+        block = len(label_parts) * line_h
+        first = y + (row_h - block) / 2 + line_h - 3
+        for line_index, component in enumerate(label_parts):
+            suffix = " +" if line_index < len(label_parts) - 1 else ""
+            out.append(
+                f'<text x="{pad_l - 12}" y="{first + line_index * line_h:.1f}" '
+                f'text-anchor="end" class="cat">{escape(component + suffix)}</text>'
+            )
+        colours = dict(LEAK_TYPES)
+        stack_top = y + (row_h - len(values) * (bar_h + 4)) / 2
+        for slot, (kind, rate, spans, leaked) in enumerate(values):
+            by = stack_top + slot * (bar_h + 4)
+            w = max(rate * plot_w, 1.0)
+            out.append(
+                f'<rect x="{pad_l}" y="{by:.1f}" width="{w:.1f}" height="{bar_h}" '
+                f'fill="{colours[kind]}" opacity="0.9"/>'
+                f'<text x="{pad_l + w + 7:.1f}" y="{by + bar_h - 3:.1f}" class="val">'
+                f'{rate * 100:.0f}% &#183; {leaked} of {spans}</text>'
+            )
+
+    out.append(
+        f'<line x1="{pad_l}" y1="{pad_t}" x2="{pad_l}" y2="{height - pad_b}" '
+        f'stroke="{AXIS}" stroke-width="1"/>'
+    )
+    out.append(key)
+    out.append("</svg>")
+    return "".join(out), width, total_height
+
+
+def leak_type_panel(data: dict | None) -> str:
+    """The by-type leak chart with the caveats its denominators require."""
+    svg, _, _ = leak_type_svg(data)
+    if not svg:
+        return ""
+    counts = data.get("spans_by_type", {})
+    small = ", ".join(
+        f"{kind} ({counts[kind]})" for kind in ("date", "age")
+        if counts.get(kind)
+    )
+    swatches = "".join(
+        f'<span><span class="sw" style="background:{colour}"></span>'
+        f'<b>{escape(kind)}</b></span>'
+        for kind, colour in LEAK_TYPES
+    )
+    return f"""
+  <h3 class="condhead">Leak rate by identifier type
+    <span class="dir">lower is better</span></h3>
+  <p class="prose">The brace convention carries no label, so each gold span is typed
+  by what a system called it when some system caught it &mdash; pooled across every
+  system and visit, which types 91 of 102 distinct surface forms. The rest fall back
+  to a lexical rule for dates and are otherwise left unclassified rather than guessed
+  into a bucket.</p>
+  {svg}
+  <div class="legend parts">{swatches}</div>
+  <p class="figcap">Only types with at least {MIN_SPANS_FOR_RATE} gold spans get a
+  rate. {"Too few to report: " + small + "." if small else ""} 16 spans stayed
+  unclassified because no system ever caught them; they leak at 62% under every
+  system, which is what "nothing detects these" looks like. Denominators count only
+  spans whose surface form the transcriber left intact &mdash; the 577 spans already
+  scrubbed to {{redacted}} cannot leak and are excluded.</p>"""
+
+
 def redaction_svg(data: dict | None) -> tuple[str, int, int]:
     """Over- and under-redaction as a diverging chart around the human gold.
 
@@ -740,7 +872,7 @@ def redaction_svg(data: dict | None) -> tuple[str, int, int]:
     return "".join(out), width, height
 
 
-def redaction_panel(data: dict | None) -> str:
+def redaction_panel(data: dict | None, leaks: dict | None = None) -> str:
     """The diverging chart with its table and caveats, for the report page."""
     svg, _, _ = redaction_svg(data)
     if not svg:
@@ -784,6 +916,7 @@ def redaction_panel(data: dict | None) -> str:
       <th>Precision</th><th>F1</th><th>Leak rate</th></tr></thead>
     <tbody>{"".join(table_rows)}</tbody>
   </table></div>
+  {leak_type_panel(leaks)}
   <div class="caveats" style="margin-top:26px">
     <div class="caveat">
       <h3>Recall is trustworthy; precision is a lower bound</h3>
@@ -1397,6 +1530,7 @@ def build_page(
     stereo: dict | None = None,
     redaction_data: dict | None = None,
     taxonomy: dict | None = None,
+    leaks: dict | None = None,
 ) -> str:
     aggregate = data.get("aggregate", {})
     per_visit = data.get("per_visit", {})
@@ -1673,7 +1807,7 @@ footer {{ margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--grid)
 </section>
 {taxonomy_panel(taxonomy)}
 {conditions_section(mono, stereo)}
-{redaction_panel(redaction_data)}
+{redaction_panel(redaction_data, leaks)}
 {partner_section(partner_summary or {})}
 <section>
   <h2>Reading these numbers</h2>
@@ -1744,6 +1878,10 @@ def main() -> int:
         "--taxonomy", default=None,
         help="taxonomy.json from error_taxonomy.py; adds the WER decomposition",
     )
+    parser.add_argument(
+        "--leaks", default=None,
+        help="leak_by_type.json from leak_by_type.py; adds the by-type leak chart",
+    )
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
@@ -1755,12 +1893,16 @@ def main() -> int:
     stereo = load_results(args.stereo)
     redaction_data = load_results(args.redaction)
     taxonomy = json.loads(Path(args.taxonomy).read_text()) if args.taxonomy else None
+    leaks = json.loads(Path(args.leaks).read_text()) if args.leaks else None
     font_b64 = ""
     if args.font and Path(args.font).exists():
         font_b64 = base64.b64encode(Path(args.font).read_bytes()).decode()
 
     Path(args.output).write_text(
-        build_page(data, font_b64, partner_summary, mono, stereo, redaction_data, taxonomy)
+        build_page(
+            data, font_b64, partner_summary, mono, stereo, redaction_data,
+            taxonomy, leaks,
+        )
     )
     print(f"wrote {args.output}")
     return 0
