@@ -1,0 +1,5 @@
+System,Visits,WER,WER substitutions,WER deletions,WER insertions,WER excluding insertions,sWER,DER,DER confusion,QTP-F1
+Chirp-3 ASR + Chirp-3 diarization + Chirp-3 redaction,203,49.64,5.13,8.35,36.15,13.48,49.07,37.93,20.90,83.72
+Chirp-3 ASR + CrisperWhisper 2.0 verbatimize + Chirp-3 diarization,203,49.74,5.57,8.33,35.84,13.90,48.86,30.55,21.38,84.51
+CrisperWhisper 2.0 ASR + pyannote community-1,203,45.14,3.94,5.62,35.58,9.56,43.02,22.48,21.28,88.10
+CrisperWhisper 2.0 ASR + pyannote 3.1,203,47.15,4.93,4.66,37.56,9.59,42.87,20.77,17.97,86.94

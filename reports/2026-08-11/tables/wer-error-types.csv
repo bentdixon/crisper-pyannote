@@ -1,0 +1,5 @@
+System,WER,repetition,backchannel,discourse marker,other insertion,near-miss,different word,deletion
+Chirp-3 ASR + Chirp-3 diarization + Chirp-3 redaction,45.40,2.48,1.30,2.41,26.03,0.53,4.63,8.03
+Chirp-3 ASR + CrisperWhisper 2.0 verbatimize + Chirp-3 diarization,45.54,2.48,1.27,2.38,25.83,0.62,4.96,7.99
+CrisperWhisper 2.0 ASR + pyannote community-1,41.88,1.67,1.06,2.43,26.26,0.76,3.28,6.44
+CrisperWhisper 2.0 ASR + pyannote 3.1,43.68,2.33,1.25,2.46,27.04,0.85,4.33,5.42

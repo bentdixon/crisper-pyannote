@@ -1,0 +1,130 @@
+{
+  "Chirp-3 ASR + Chirp-3 diarization + Chirp-3 redaction": {
+    "visits": 269,
+    "reference_words": 853136,
+    "counts": {
+      "repetition": 25255,
+      "backchannel": 13779,
+      "discourse marker": 26456,
+      "other insertion": 282427,
+      "near-miss": 4786,
+      "different word": 41265,
+      "deletion": 63451
+    },
+    "rates": {
+      "repetition": 0.024751893277308496,
+      "backchannel": 0.012995759847699543,
+      "discourse marker": 0.024055725473608586,
+      "other insertion": 0.26031803445953705,
+      "near-miss": 0.005319657641055485,
+      "different word": 0.04628593986492082,
+      "deletion": 0.08026551994545003
+    },
+    "rates_pooled": {
+      "repetition": 0.029602548714390203,
+      "backchannel": 0.016151000543875773,
+      "discourse marker": 0.03101029613098029,
+      "other insertion": 0.33104569494195535,
+      "near-miss": 0.005609891037302376,
+      "different word": 0.04836860711539544,
+      "deletion": 0.0743738395754018
+    },
+    "wer_reconstructed": 0.45399253050958
+  },
+  "CrisperWhisper 2.0 ASR + pyannote community-1": {
+    "visits": 269,
+    "reference_words": 853136,
+    "counts": {
+      "repetition": 18025,
+      "backchannel": 11206,
+      "discourse marker": 26588,
+      "other insertion": 283015,
+      "near-miss": 6770,
+      "different word": 28473,
+      "deletion": 55289
+    },
+    "rates": {
+      "repetition": 0.016651167102930506,
+      "backchannel": 0.010561725715990962,
+      "discourse marker": 0.02425946489213152,
+      "other insertion": 0.2625890713038609,
+      "near-miss": 0.007586976396643857,
+      "different word": 0.03281333313630075,
+      "deletion": 0.06435415381953397
+    },
+    "rates_pooled": {
+      "repetition": 0.021127932709439058,
+      "backchannel": 0.013135068734644886,
+      "discourse marker": 0.031165019410738733,
+      "other insertion": 0.33173491682451567,
+      "near-miss": 0.007935428817914142,
+      "different word": 0.03337451473153167,
+      "deletion": 0.06480678344367134
+    },
+    "wer_reconstructed": 0.4188158923673925
+  },
+  "Chirp-3 ASR + CrisperWhisper 2.0 verbatimize + Chirp-3 diarization": {
+    "visits": 269,
+    "reference_words": 853136,
+    "counts": {
+      "repetition": 25489,
+      "backchannel": 13533,
+      "discourse marker": 26250,
+      "other insertion": 280470,
+      "near-miss": 5648,
+      "different word": 44235,
+      "deletion": 63159
+    },
+    "rates": {
+      "repetition": 0.024765292335116464,
+      "backchannel": 0.012728092384224022,
+      "discourse marker": 0.02384692333383196,
+      "other insertion": 0.2582748959027307,
+      "near-miss": 0.006210298996437593,
+      "different word": 0.049634775023377195,
+      "deletion": 0.07989161971914399
+    },
+    "rates_pooled": {
+      "repetition": 0.029876830892143807,
+      "backchannel": 0.015862652613416853,
+      "discourse marker": 0.030768834042872416,
+      "other insertion": 0.3287518051049305,
+      "near-miss": 0.006620280939967367,
+      "different word": 0.05184988090996043,
+      "deletion": 0.07403157292623919
+    },
+    "wer_reconstructed": 0.4553518976948619
+  },
+  "CrisperWhisper 2.0 ASR + pyannote 3.1": {
+    "visits": 269,
+    "reference_words": 853136,
+    "counts": {
+      "repetition": 24114,
+      "backchannel": 13006,
+      "discourse marker": 26875,
+      "other insertion": 290152,
+      "near-miss": 7447,
+      "different word": 37722,
+      "deletion": 47960
+    },
+    "rates": {
+      "repetition": 0.02332053874258941,
+      "backchannel": 0.012466216954226192,
+      "discourse marker": 0.024595483259899246,
+      "other insertion": 0.2703644334631826,
+      "near-miss": 0.008507598332643815,
+      "different word": 0.04327274897106361,
+      "deletion": 0.05423331779365119
+    },
+    "rates_pooled": {
+      "repetition": 0.028265130061326683,
+      "backchannel": 0.015244931640441852,
+      "discourse marker": 0.03150142532960747,
+      "other insertion": 0.34010052324600065,
+      "near-miss": 0.008728971699705558,
+      "different word": 0.04421569362915174,
+      "deletion": 0.05621612497890137
+    },
+    "wer_reconstructed": 0.43676033751725607
+  }
+}
