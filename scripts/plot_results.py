@@ -666,6 +666,10 @@ def leak_type_svg(data: dict | None, legend: bool = False) -> tuple[str, int, in
         entry = aggregate.get(registry.label_of(name)) or aggregate.get(name)
         if not entry:
             continue
+        # A system with no redaction step leaks every span by construction;
+        # including it turns the chart into a comparison against nothing.
+        if not entry.get("redactions"):
+            continue
         by_type = entry.get("by_type", {})
         values = [
             (kind, by_type[kind]["leak_rate"], by_type[kind]["spans"], by_type[kind]["leaked"])

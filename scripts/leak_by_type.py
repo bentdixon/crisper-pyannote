@@ -96,6 +96,10 @@ def main(argv: list[str] | None = None) -> int:
 
     # (visit, span index) -> {"surface", "leaked": {system: bool}}
     spans: dict[tuple[str, int], dict] = {}
+    # Placeholders each system emitted, so the chart can drop systems that
+    # redact nothing: they leak everything by construction and comparing
+    # against them says nothing about a redactor.
+    redactions: Counter = Counter()
     # surface form -> Counter of labels any system gave it, anywhere
     labels_for: dict[str, Counter] = defaultdict(Counter)
 
@@ -121,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
             if not words:
                 continue
             result = redaction.score_visit(human, words)
+            redactions[name] += result["predicted_spans"]
             for order, span in enumerate(result["spans"]):
                 if not span["testable"]:
                     continue
@@ -160,6 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     aggregate = {}
     for name in totals:
         aggregate[registry.label_of(name)] = {
+            "redactions": redactions[name],
             "by_type": {
                 category: {
                     "spans": totals[name][category],
