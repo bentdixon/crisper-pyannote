@@ -52,6 +52,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "finetune"))
 
+import systems as registry  # noqa: E402
 from partner_compare import analyze, replace_fillers, tokenize  # noqa: E402
 from prepare_data import TIMESTAMPED_LINE  # noqa: E402
 
@@ -188,21 +189,30 @@ def main(argv: list[str] | None = None) -> int:
         entry["word_ratio"] = round(entry["hyp_words"] / max(entry["ref_words"], 1), 4)
         aggregate[name] = entry
 
-    width = max((len(n) for n in aggregate), default=6)
-    print(f"\n{'system':{width}}  visits  {'raw':>8}  {'normalized':>11}  {'filler-norm':>12}  {'ratio':>6}")
-    print("-" * (width + 56))
+    rows = []
     for name, entry in sorted(aggregate.items(), key=lambda kv: kv[1]["filler_normalized"]):
-        print(
-            f"{name:{width}}  {entry['visits']:6d}  {entry['raw']:7.2f}%  "
-            f"{entry['normalized']:10.2f}%  {entry['filler_normalized']:11.2f}%  "
-            f"{entry['word_ratio']:6.3f}"
-        )
+        rows.append((
+            registry.label_of(name),
+            [
+                ("visits", str(entry["visits"])),
+                ("raw", f"{entry['raw']:.2f}%"),
+                ("normalized", f"{entry['normalized']:.2f}%"),
+                ("filler-norm", f"{entry['filler_normalized']:.2f}%"),
+                ("median", f"{entry['filler_normalized_median']:.2f}%"),
+                ("word ratio", f"{entry['word_ratio']:.3f}"),
+            ],
+        ))
+    print()
+    print(registry.report(rows))
 
     if args.output:
         payload = {
             "metric": "partner compareFiles.py (difflib SequenceMatcher, percent)",
-            "aggregate": aggregate,
-            "per_visit": per_visit,
+            "aggregate": {registry.label_of(k): v for k, v in aggregate.items()},
+            "per_visit": {
+                visit: {registry.label_of(k): v for k, v in entry.items()}
+                for visit, entry in per_visit.items()
+            },
             "missing": dict(missing),
             "adapter_errors": {k: dict(v) for k, v in adapter_errors.items() if v},
         }

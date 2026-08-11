@@ -36,6 +36,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import redaction  # noqa: E402
+import systems as registry  # noqa: E402
 from evaluate_systems import ADAPTERS, make_file_adapter, make_run_adapter  # noqa: E402
 
 logger = logging.getLogger("score_redaction")
@@ -148,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
                         "site": site,
                         "subject": subject,
                         "session": session,
-                        "system": name,
+                        "system": registry.label_of(name),
                         "span": order,
                         "identifier": span["surface"],
                         "leaked": int(span["leaked"]),
@@ -206,20 +207,30 @@ def main(argv: list[str] | None = None) -> int:
             "categories": dict(categories[name]),
         }
 
-    width = max((len(n) for n in aggregate), default=8)
-    print(
-        f"\n{'system':{width}}  visits  gold  pred    TP    FP    FN  "
-        f"{'prec':>6} {'rec':>6} {'F1':>6}  {'under':>6} {'over':>6}  {'leak':>6}"
-    )
-    print("-" * (width + 82))
-    for name, s in sorted(aggregate.items(), key=lambda kv: -(kv[1]["f1"] or 0)):
-        leak = f"{s['leak_rate'] * 100:5.1f}%" if s["leak_rate"] is not None else "     -"
-        print(
-            f"{name:{width}}  {s['visits']:6d} {s['gold_spans']:5d} {s['predicted_spans']:5d} "
-            f"{s['true_positives']:5d} {s['false_positives']:5d} {s['false_negatives']:5d}  "
-            f"{(s['precision'] or 0) * 100:5.1f}% {(s['recall'] or 0) * 100:5.1f}% "
-            f"{s['f1'] * 100:5.1f}%  {s['under_rate'] * 100:5.1f}% {s['over_rate'] * 100:5.1f}%  {leak}"
+    rows = []
+    for name, stats in sorted(aggregate.items(), key=lambda kv: -(kv[1]["f1"] or 0)):
+        leak = (
+            f"{stats['leak_rate'] * 100:.1f}%" if stats["leak_rate"] is not None else "-"
         )
+        rows.append((
+            registry.label_of(name),
+            [
+                ("visits", str(stats["visits"])),
+                ("gold", str(stats["gold_spans"])),
+                ("redacted", str(stats["predicted_spans"])),
+                ("TP", str(stats["true_positives"])),
+                ("FP", str(stats["false_positives"])),
+                ("FN", str(stats["false_negatives"])),
+                ("recall", f"{(stats['recall'] or 0) * 100:.1f}%"),
+                ("precision", f"{(stats['precision'] or 0) * 100:.1f}%"),
+                ("F1", f"{stats['f1'] * 100:.1f}%"),
+                ("under", f"{stats['under_rate'] * 100:.1f}%"),
+                ("over", f"{stats['over_rate'] * 100:.1f}%"),
+                ("leak", leak),
+            ],
+        ))
+    print()
+    print(registry.report(rows))
 
     if args.leaks_csv:
         # Sorted so a reviewer reads one participant's sessions together and the
@@ -244,7 +255,16 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.output:
         Path(args.output).write_text(
-            json.dumps({"aggregate": aggregate, "per_visit": per_visit}, indent=2) + "\n"
+            json.dumps(
+                {
+                    "aggregate": {registry.label_of(k): v for k, v in aggregate.items()},
+                    "per_visit": {
+                        visit: {registry.label_of(k): v for k, v in entry.items()}
+                        for visit, entry in per_visit.items()
+                    },
+                },
+                indent=2,
+            ) + "\n"
         )
         logger.info("wrote %s", args.output)
     return 0

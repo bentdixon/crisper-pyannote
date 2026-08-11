@@ -41,10 +41,12 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "finetune"))
 
 import jiwer  # noqa: E402
 import numpy as np  # noqa: E402
+import systems as registry  # noqa: E402
 from prepare_data import load_timestamped_text, normalize_text  # noqa: E402
 from pyannote.core import Annotation, Segment  # noqa: E402
 from pyannote.metrics.diarization import DiarizationErrorRate  # noqa: E402
@@ -574,19 +576,23 @@ def main(argv: list[str] | None = None) -> int:
             "hyp_words": sum(r["hyp_words"] for r in results),
         }
 
-    print(
-        f"\n  {'system':16s} {'visits':>6} {'WER':>8} {'sub':>7} {'del':>7} {'ins':>7} "
-        f"{'WERnoIns':>9} {'sWER':>8} {'DER':>8} {'DERconf':>8} {'QTP-F1':>8}"
-    )
+    rows = []
     for name, stats in aggregate.items():
-        def show(key, spec=".4f"):
+        def show(key, spec=".1%"):
             return format(stats[key], spec) if stats.get(key) is not None else "-"
-        print(
-            f"  {name:16s} {stats['visits']:6d} {show('WER'):>8} {show('WER_sub'):>7} "
-            f"{show('WER_del'):>7} {show('WER_ins'):>7} {show('WER_no_ins'):>9} "
-            f"{show('sWER'):>8} {show('DER'):>8} {show('DER_confusion'):>8} "
-            f"{show('QTP_F1'):>8}"
-        )
+        rows.append((
+            registry.label_of(name),
+            [
+                ("visits", str(stats["visits"])),
+                ("WER", show("WER")), ("sub", show("WER_sub")),
+                ("del", show("WER_del")), ("ins", show("WER_ins")),
+                ("WER-no-ins", show("WER_no_ins")), ("sWER", show("sWER")),
+                ("DER", show("DER")), ("DER-conf", show("DER_confusion")),
+                ("QTP-F1", show("QTP_F1")),
+            ],
+        ))
+    print()
+    print(registry.report(rows))
 
     # Excluded reference streams are reported, never silently dropped: the count
     # is a property of the human transcripts, so it must be identical across
@@ -604,8 +610,20 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     if args.output:
+        # Keyed by the full system name, not the short CLI identifier: the JSON
+        # is read by people as well as by plot_results, and "ours" means nothing
+        # to anyone outside this repo.
         Path(args.output).write_text(
-            json.dumps({"aggregate": aggregate, "per_visit": per_visit}, indent=2) + "\n"
+            json.dumps(
+                {
+                    "aggregate": {registry.label_of(k): v for k, v in aggregate.items()},
+                    "per_visit": {
+                        visit: {registry.label_of(k): v for k, v in entry.items()}
+                        for visit, entry in per_visit.items()
+                    },
+                },
+                indent=2,
+            ) + "\n"
         )
         logger.info("Wrote %s", args.output)
     return 0

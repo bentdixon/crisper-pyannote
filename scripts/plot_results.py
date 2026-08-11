@@ -24,7 +24,12 @@ import argparse
 import base64
 import json
 import statistics
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import systems as registry  # noqa: E402
 
 # --- design tokens (from design_language.md, Palette 1) ---------------------
 GRIDLINE = "#e1e0d9"
@@ -34,68 +39,9 @@ MUTED = "#5a5a56"
 MUTED_DARK = "#3a3a37"
 WINNER = "#1baf7a"
 
-# Per-system colour is held constant across every panel so a system can be
-# tracked by eye between charts. Green is deliberately NOT a system colour --
-# the design language reserves it for the winner marker.
-# Every label names the ASR model, then the diarization system, then the LLM
-# reviewer when one is used, joined by "+" so the composition of each system is
-# readable without reference to the prose.
-SYSTEMS = [
-    (
-        "chirp3",
-        ["Chirp-3 ASR", "Chirp-3 diarization"],
-        "#898781",
-        "incumbent, as delivered by the bucket",
-    ),
-    (
-        "verbatimize",
-        ["Chirp-3 ASR", "CrisperWhisper 2.0 verbatimize", "Chirp-3 diarization"],
-        "#e87ba4",
-        "Chirp text kept, disfluencies inserted by CW2",
-    ),
-    (
-        "ours",
-        ["CrisperWhisper 2.0 ASR", "pyannote community-1"],
-        "#2a78d6",
-        "our pipeline",
-    ),
-    (
-        "ours_llm",
-        ["CrisperWhisper 2.0 ASR", "pyannote community-1", "Qwen2.5-7B-Instruct"],
-        "#7fb0e8",
-        "our pipeline, LLM review applied",
-    ),
-    (
-        "baseline",
-        ["CrisperWhisper 2.0 ASR", "pyannote 3.1"],
-        "#eda100",
-        "other team's pipeline, ported to CW2",
-    ),
-    (
-        "baseline_llm",
-        ["CrisperWhisper 2.0 ASR", "pyannote 3.1", "Qwen2.5-7B-Instruct"],
-        "#f5cc6b",
-        "their pipeline, LLM review applied",
-    ),
-    (
-        "baseline_mono",
-        ["CrisperWhisper 2.0 ASR", "pyannote 3.1 (forced mono)"],
-        "#b8791f",
-        "their pipeline with the stereo channel path disabled",
-    ),
-    (
-        "ours_redacted",
-        ["CrisperWhisper 2.0 ASR", "pyannote community-1", "Gemma 4 31B redaction"],
-        "#5b4bd6",
-        "our pipeline, PII redacted in windows by Gemma",
-    ),
-    (
-        "baseline_redacted",
-        ["CrisperWhisper 2.0 ASR", "pyannote 3.1", "Gemma 4 31B redaction"],
-        "#9a8ae8",
-        "their pipeline, PII redacted in windows by Gemma",
-    ),
-]
+# The system registry lives in systems.py so a name is defined once and
+# rendered the same way in every console table, JSON file, CSV and chart.
+SYSTEMS = registry.SYSTEMS
 
 # (title, per-visit key, aggregate key, direction, caption)
 # Captions say what the number means in words, because every metric here is a
@@ -312,6 +258,31 @@ def subset_mean(per_visit: dict, visits: list[str], name: str, key: str) -> floa
 
 def escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def load_results(path: str | None) -> dict | None:
+    """Read a results file and key it by short identifier internally.
+
+    Scorers write full system names now, and older files carry the short keys.
+    Both are folded to the short key on the way in, so the rest of this module
+    has one form to reason about and a scoring run from before the rename stays
+    readable rather than silently rendering as an empty report.
+    """
+    if not path:
+        return None
+    data = json.loads(Path(path).read_text())
+    for section in ("aggregate", "per_visit"):
+        block = data.get(section)
+        if not isinstance(block, dict):
+            continue
+        if section == "aggregate":
+            data[section] = {registry.key_of(k): v for k, v in block.items()}
+        else:
+            data[section] = {
+                visit: {registry.key_of(k): v for k, v in entry.items()}
+                for visit, entry in block.items()
+            }
+    return data
 
 
 # A visit where every system emits more than this many words per reference word
@@ -1326,13 +1297,13 @@ def main() -> int:
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
-    data = json.loads(Path(args.results).read_text())
+    data = load_results(args.results)
     partner_summary = None
     if args.partner:
-        partner_summary = merge_partner(data, json.loads(Path(args.partner).read_text()))
-    mono = json.loads(Path(args.mono).read_text()) if args.mono else None
-    stereo = json.loads(Path(args.stereo).read_text()) if args.stereo else None
-    redaction_data = json.loads(Path(args.redaction).read_text()) if args.redaction else None
+        partner_summary = merge_partner(data, load_results(args.partner))
+    mono = load_results(args.mono)
+    stereo = load_results(args.stereo)
+    redaction_data = load_results(args.redaction)
     font_b64 = ""
     if args.font and Path(args.font).exists():
         font_b64 = base64.b64encode(Path(args.font).read_bytes()).decode()
