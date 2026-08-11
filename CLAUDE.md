@@ -329,34 +329,92 @@ comparison; the LLM delta is trustworthy only because it is exactly zero.
 ## Full six-system evaluation (2026-08-08, scripts/evaluate_systems.py)
 
 Systems scored against the human transcripts with the DIALOG-DeID metrics, all
-over the complete 269-visit cohort: chirp3, verbatimize, ours (community-1),
-ours_llm, baseline (pyannote 3.1), baseline_llm. Sweeps all reached 269/269.
+over the complete 269-visit cohort. Sweeps all reached 269/269.
 
-Final numbers, after the longform ASR fix below (`outputs/results.json`):
+**Naming**: short keys (`ours`, `baseline`) survive only as CLI arguments,
+output directory names and dict keys. Every rendered output -- console tables,
+JSON keys, the leaks CSV, chart labels -- names the ASR model, the diarization
+system and any post-processing, from the one registry in `scripts/systems.py`.
+Add a system there and nowhere else. `plot_results.load_results` folds either
+form to the short key on read, so results files written before the rename still
+render.
 
-    system         visits     WER    sWER     DER  DERconf  QTP-F1
-    chirp3            269  0.8748  0.7121  0.6907   0.2071  0.8388
-    verbatimize       269  0.8751  0.6747  0.6346   0.2108  0.8463
-    ours              269  0.8374  0.8347  0.2242   0.2146  0.8790
-    ours_llm          269  0.8385  0.8700  0.2254   0.2157  0.8780
-    baseline          269  0.8670  0.5174  0.2054   0.1774  0.8711
-    baseline_llm      269  0.8670  0.5231  0.2072   0.1793  0.8701
+Final numbers, after the sWER correction below (`outputs/results.json`,
+rescored 2026-08-11):
+
+    system         visits     WER  WERnoIns    sWER     DER  DERconf  QTP-F1
+    chirp3            269  0.8748    0.4392  0.4785  0.6907   0.2071  0.8382
+    verbatimize       269  0.8751    0.4438  0.4775  0.6346   0.2108  0.8458
+    ours              269  0.8374    0.4053  0.4205  0.2242   0.2146  0.8832
+    ours_llm          269  0.8385    0.4058  0.4241  0.2254   0.2157  0.8823
+    baseline          269  0.8670    0.4129  0.4174  0.2054   0.1774  0.8706
+    baseline_llm      269  0.8670    0.4129  0.4231  0.2072   0.1793  0.8695
 
 Readings that survive scrutiny:
 
-- **pyannote 3.1 beats community-1 on speaker attribution**: sWER 0.517 vs
-  0.835, confusion 0.177 vs 0.215. This held after the ASR fix (community-1
-  had previously been judged on a transcript missing a third of its words),
-  though the confusion gap narrowed from 0.331 to 0.215.
-- **community-1 leads QTP-F1** (0.879, best in table) and marginally WER, so
-  it is not strictly dominated.
+- **community-1 and pyannote 3.1 are level on sWER**: 0.4205 vs 0.4174, a gap
+  of 0.3 points. An earlier version of this file claimed 0.835 vs 0.517 and
+  called it "pyannote 3.1 beats community-1 on speaker attribution". That was
+  a metric artifact, not a result -- see the sWER section below. Do not quote
+  the old figure.
+- **pyannote 3.1 does lead DER confusion**, 0.177 vs 0.215 mean and 0.160 vs
+  0.202 median, losing on only 23 of 269 visits. This is bounded, consistent
+  and real, but it is 3-4 points, not the 32 the broken sWER implied.
+- **community-1 leads WER excluding insertions (0.405, best in table) and
+  QTP-F1 (0.883)**, so neither diarizer dominates.
 - **The LLM review is worse on every metric for both trees, 269/269 visits.**
   Never better, not once. Its speaker flags also carry fabricated
   justifications (one flagged a turn for "contains '?' and starts with 'how
   often'" when it contained neither) and only 15 of 163 applied. Drop it.
-- All six systems now sit at 1.33-1.36 hypothesis words per reference word.
-  That agreement is the check that matters: ours and chirp3 match to three
-  decimals while sharing no code.
+- All six systems sit at 1.33-1.36 hypothesis words per reference word. That
+  agreement is the check that matters: ours and chirp3 match to three decimals
+  while sharing no code.
+
+### sWER was measuring stream count, not attribution (fixed 2026-08-11)
+
+The 32-point sWER gap was an artifact of two flaws in the metric, both mine.
+Traced on `PronetCM/CM05540/day0082_session001`:
+
+    ours      ref "S2:"  1 word -> hyp UNKNOWN  88 words   WER 88.000
+    baseline  ref "S2:"  1 word -> hyp None      0 words   WER  1.000
+
+The human transcript has a stray `S2:` line carrying one word. Our pipeline
+exposes a third stream (the `UNKNOWN` bucket for words in diarization gaps,
+about 1% of words), so `linear_sum_assignment` must match the phantom to it and
+scored 88.0; the other pipeline emits two streams, so the phantom went
+unmatched and was charged the capped 1.0. **An unmatched stream was capped at
+1.0 while a badly matched one was unbounded**, so emitting an extra stream cost
+more than losing a speaker outright. 8 visits exceeded sWER 3.0 for ours
+against zero for baseline, and those 8 carried the entire corpus gap; the
+medians were 0.297 and 0.295 throughout.
+
+Two corrections in `score_visit`: every matched stream is capped at 1.0, and
+reference streams under `MIN_REFERENCE_WORDS` (5) are dropped as transcript
+formatting artifacts (12 corpus-wide, identical across all six systems -- the
+count is logged per system and a mismatch is an error, since the filter is a
+property of the reference). `swer_uncapped` is retained the way
+`DER_word_level` is, so the correction stays auditable.
+
+Community-1 itself was never at fault: it found exactly 2 speakers on all 269
+files.
+
+### There is no stereo channel advantage on this corpus
+
+The obvious explanation for the DER-confusion gap was that the other team's
+pipeline reads speakers off stereo channels rather than diarizing. It does not,
+here. `scripts/classify_channels.py` runs *their* `has_real_channel_separation`
+(silero VAD per channel, then average |L-R| dB at real speech moments, 3.0 dB
+threshold) over every file: 203 are mono, and all 66 stereo files measure
+**0.000 to 0.082 dB**. Every one is a stereo container holding duplicated mono,
+so the channel-dominance path never fired and all 269 files were diarized by
+pyannote from a downmix. The forced-mono re-run (`--force-mono` in
+`transcription_core.py`, kept for future corpora) was therefore unnecessary and
+was not run.
+
+What the split does show is that audio provenance dominates everything else:
+`outputs/results_mono.json` (203) against `outputs/results_stereo.json` (66),
+chirp3 WER 90.9% vs 77.1%. A 14-point swing between recording conditions, where
+the best system beats the worst by 4.
 
 ### The longform ASR bug -- ours was transcribing 34% less audio
 
@@ -454,6 +512,29 @@ General lesson for this repo's remote tooling: over ssh, an error path and a
 legitimate state must never share a signal. The same class of bug appeared
 three times (pgrep self-match, adapter except, ssh-vs-pgrep exit status).
 
+A second family, all of which produced plausible-looking tables rather than
+errors:
+
+- **A permissive pattern reading its own output.** `redaction.PLACEHOLDER`
+  started as `\[[A-Z][A-Z_]*\]`, which matches CrisperWhisper's `[UM]` and
+  `[UH]`. The unredacted pipeline scored 30,487 "redactions" over 269 visits
+  and produced a complete, believable table. The label set is now closed
+  (`PII_LABELS`) and must stay in sync with `redact_llm.LABELS`.
+- **Two output shapes behind one adapter.** The other team's pipeline writes a
+  bare JSON array; everything this repo writes is an object with a `words` key.
+  The redacted copies of their files are objects, so the adapter returned a
+  dict and the caller iterated its keys, failing as `'str' object has no
+  attribute 'get'` far from the actual mistake. `as_words` now accepts both.
+- **Shell precedence in a two-job launch.** `cd X && A & B &` parses as
+  `(cd X && A) & (B) &`, so the second scoring job ran from the home directory
+  and died on a missing file while the first succeeded. Launch background jobs
+  one `ssh` invocation each, or repeat the `cd`.
+- **A regex written for one of three spellings.** The partner-WER reference
+  parser matched only `S1 HH:MM:SS`, but 56k of 69k transcript lines use
+  `INTERVIEWER:`/`PARTICIPANT:`. Speaker tags and timestamp digits stayed in
+  the reference on most files, inflating every system's WER by ~7 points
+  equally, so nothing looked wrong. The word-ratio cross-check caught it.
+
 ### Known caveats on the numbers
 
 - Coverage was equal (269) for ours/verbatimize/baseline at final scoring, but
@@ -474,6 +555,22 @@ three times (pgrep self-match, adapter except, ssh-vs-pgrep exit status).
 Report generator: `scripts/plot_results.py` renders results.json to a
 self-contained HTML page (DM Sans embedded as a data URI -- the artifact host
 blocks font CDNs, so a linked webfont silently falls back).
+`scripts/export_charts.py` writes each figure as standalone HTML + PNG (11 of
+them: six metrics, the partner metric, WER composition, the two mono/stereo
+dumbbells, and PII redaction). Both take `--partner`, `--mono`, `--stereo` and
+`--redaction`. PNGs are screenshotted in headless Chrome with viewport slack
+and cropped in Python, because `--window-size` counts browser UI and silently
+drops the bottom of every image; always verify by decoding pixels rather than
+trusting the exit code.
+
+Full regeneration:
+
+    uv run python scripts/plot_results.py results.json --partner partner_wer.json \
+        --mono results_mono.json --stereo results_stereo.json \
+        --redaction redaction.json --font dmsans.ttf --output eval_report.html
+    uv run python scripts/export_charts.py results.json --partner partner_wer.json \
+        --mono results_mono.json --stereo results_stereo.json \
+        --redaction redaction.json --output-dir charts --font dmsans.ttf
 
 ### Cross-check with the partner team's WER (2026-08-11)
 
@@ -524,6 +621,89 @@ the reference on most files, inflating every system's WER by ~7 points and
 depressing the word ratio to 1.13. `reference_prose` now reuses
 prepare_data's `TIMESTAMPED_LINE`, whose speaker field is a bare `(\S+)`.
 The word-ratio agreement with our metric is what caught it.
+
+## PII redaction (2026-08-11)
+
+Answers the DIALOG-DeID section 2.3 question on this corpus: span-level
+precision / recall / micro-F1 against gold PII spans.
+
+**The gold already exists in the data.** Transcribers wrap identifying material
+in curly braces: 887 spans across 142 of 269 sessions. (This is why the partner
+team's `compareFiles.py` strips `\{[^}]*\}` before scoring WER.) The convention
+splits cleanly by data prefix, which decides what each span can be used for:
+
+    annotation style          sites                        spans
+    {redacted}, scrubbed      CA CM GA HA IR (NDA_4)         577
+    {isaiah}, surface kept    BI SD SF SI YA (study_test)    310
+
+Scrubbed spans still count for span-level P/R/F1, which is positional, but
+cannot be leak-tested. Zero crossover between the two styles.
+
+**Chirp-3 already redacts** into `[PERSON_NAME]`, `[DATE]`, `[LOCATION]`,
+`[AGE]`, `[GENDER]`, `[US_STATE]`, `[DATE_OF_BIRTH]` -- 4803 tokens corpus-wide.
+Our pipelines redact nothing, so `scripts/redact_llm.py` runs Gemma 4 31B over
+their output to make the comparison redactor-against-redactor.
+
+Matching is by token alignment, not timestamps: a gold span and a placeholder
+share no surface text ("isaiah" against "[PERSON_NAME]"), so they land in the
+same difflib replace block, which is exactly the correspondence needed.
+
+`outputs/redaction.json`, all 269 visits:
+
+    system                          recall  precision      F1   leak
+    community-1 + Gemma 4 31B        75.1%      30.8%   43.7%  10.3%
+    pyannote 3.1 + Gemma 4 31B       75.2%      29.2%   42.0%  13.2%
+    chirp3 (native)                  66.1%      20.2%   30.9%  18.7%
+    verbatimize                       8.7%      18.6%   11.8%  67.1%
+    ours / baseline (no redaction)     0 %          -       0%  ~76%
+
+- **Gemma beats Chirp-3's native redaction on every measure** while redacting
+  *less* (2135 spans vs 2866): 9 points more sensitive, 10 more precise, and
+  half the leak rate.
+- **verbatimize re-identifies Chirp's redacted output.** It destroys 86% of
+  Chirp's redactions and takes the leak rate from 18.7% to 67.1%. Verified by
+  hand: `[DATE]. [DATE].` -> "May ninth", `[AGE]` -> "three". The verbatimize
+  task transcribes from audio using Chirp's text as a guide, so where Chirp
+  wrote a placeholder the model simply hears the real words. A pipeline that
+  consumes de-identified input and emits identified output is a privacy
+  regression -- this alone probably disqualifies verbatimize for release.
+- **Recall is trustworthy, precision is a lower bound.** A gold span is real
+  PII, so a miss is a real miss. But only 142 of 269 transcripts carry any
+  annotation, so a genuine identifier nobody marked counts against a system
+  that caught it. Gemma flagging "Boylston" and "MBTA" (city-identifying,
+  unmarked by the transcriber) is the canonical case.
+
+### The chunking protocol, and why it addresses sentences
+
+`redact_llm.py` cuts the transcript into chunks of at most 5000 characters,
+always closing on a sentence boundary, one sentence of overlap. The model
+returns `{"sentence": N, "text": "<exact words>", "label": ...}` -- not
+character offsets, not word indices:
+
+- character offsets need the model to count characters, and an off-by-a-few
+  silently redacts the wrong span;
+- word indices need a running count over hundreds of tokens, and a wrong index
+  is *undetectable* -- it names a real word, just not the intended one;
+- a sentence number plus the exact words is checkable. The quote is searched
+  for inside the sentence it was attributed to, and a quote that is not there
+  is a hallucination: dropped and counted as `unmatched_quotes`.
+
+Corpus-wide: 2814 chunks, **0 chunk failures**, 78 unmatched quotes (2.8%),
+5694 words redacted. A failed chunk keeps its original words and is counted --
+it must never look like a chunk with no PII in it.
+
+`scripts/score_redaction.py --leaks-csv` writes one row per leaked identifier
+(site, subject, session, system, identifier, both contexts) for inspection.
+**That file is PII in the clear by construction** -- it lives at
+`outputs/private/leaks.csv` on the cluster, never in the repo, never in an
+artifact. 736 rows across 18 participants, of which 32 are `redacted=1` yet
+still leaked: the system caught one occurrence of a name and missed another,
+which is the worst outcome because the transcript looks de-identified.
+
+Not yet done: the paper reports per-category F1 (names / dates / locations),
+which needs labelled gold. The brace convention carries no label. If the
+PSYCHS-Bench gold PHI annotations from the paper cover any of these 269
+sessions, they would allow the per-category table to be reproduced exactly.
 
 ## Open questions / future (spec section "For Future")
 
