@@ -34,11 +34,17 @@ import difflib
 import re
 from pathlib import Path
 
-# A placeholder any redactor in this project may emit. Chirp-3's label set plus
-# the ones redact_llm.py is prompted to use; the pattern is deliberately broad
-# so an unexpected label is counted as a redaction rather than silently read as
-# ordinary words.
-PLACEHOLDER = re.compile(r"\[[A-Z][A-Z_]*\]")
+# Exactly the PII labels, never a general uppercase-in-brackets pattern.
+# CrisperWhisper writes its filled pauses and vocal events the same way --
+# [UM], [UH], [LAUGHTER] -- so a broad pattern reads a verbatim transcript as
+# one enormous redaction: it scored our unredacted output at 30,487 "redactions"
+# over 269 visits, all of them fillers, and produced an entirely plausible
+# table. The label set is closed and must stay in sync with redact_llm.LABELS.
+PII_LABELS = [
+    "PERSON_NAME", "NAME", "DATE", "DATE_OF_BIRTH", "LOCATION", "US_STATE",
+    "ADDRESS", "AGE", "GENDER", "PHONE_NUMBER", "EMAIL", "ORGANIZATION",
+]
+PLACEHOLDER = re.compile(r"\[(" + "|".join(PII_LABELS) + r")\]")
 GOLD_SPAN = re.compile(r"\{([^}]*)\}")
 
 # "{redacted}" marks a span whose surface form the transcriber already removed,
@@ -50,6 +56,11 @@ SCRUBBED = {"redacted"}
 # counterpart in the brace convention and are reported separately.
 CATEGORY = {
     "PERSON_NAME": "name",
+    "NAME": "name",
+    "ADDRESS": "location",
+    "PHONE_NUMBER": "contact",
+    "EMAIL": "contact",
+    "ORGANIZATION": "organization",
     "DATE": "date",
     "DATE_OF_BIRTH": "date",
     "LOCATION": "location",
