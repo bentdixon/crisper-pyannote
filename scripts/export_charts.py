@@ -36,10 +36,14 @@ from plot_results import (  # noqa: E402
     WINNER,
     chart_svg,
     collect,
+    comparison_svg,
+    composition_svg,
     escape,
+    load_results,
     merge_partner,
     metrics_for,
     quartiles,
+    redaction_svg,
 )
 
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
@@ -175,6 +179,102 @@ svg .figcap {{ font-size: 10.5px; fill: {MUTED}; }}
 """
 
 
+def titled(title: str, subtitle: str, svg: str, width: int, height: int,
+           caption: str) -> tuple[str, int, int]:
+    """Wrap a bare chart SVG in the title block and caption the metric charts
+    build for themselves.
+
+    chart_svg renders its own heading when standalone; the composition,
+    mono/stereo and redaction figures are built for the report page, where the
+    heading is HTML. Exported alone they would arrive as an unlabelled diagram,
+    so the same furniture is composed around them here via a nested <svg>.
+    """
+    def wrap(text: str, limit: int) -> list[str]:
+        lines, line = [], ""
+        for word in text.split():
+            if len(line) + len(word) + 1 > limit:
+                lines.append(line)
+                line = word
+            else:
+                line = f"{line} {word}".strip()
+        if line:
+            lines.append(line)
+        return lines
+
+    head = wrap(subtitle, 82)
+    head_h = 40 + len(head) * 15
+    foot = wrap(caption, 96)
+    foot_h = (18 + len(foot) * 14) if foot else 0
+    total_h = head_h + height + foot_h
+    total_w = max(width, 640)
+
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {total_w} {total_h}" '
+        f'width="{total_w}" height="{total_h}">',
+        f'<text x="0" y="17" class="ttl">{escape(title)}</text>',
+    ]
+    for index, line in enumerate(head):
+        parts.append(f'<text x="0" y="{38 + index * 15}" class="cap">{escape(line)}</text>')
+    parts.append(f'<g transform="translate(0,{head_h})">{svg}</g>')
+    for index, line in enumerate(foot):
+        parts.append(
+            f'<text x="0" y="{head_h + height + 14 + index * 14}" class="figcap">'
+            f'{escape(line)}</text>'
+        )
+    parts.append("</svg>")
+    return "".join(parts), total_w, total_h
+
+
+def extra_figures(data: dict, mono: dict | None, stereo: dict | None,
+                  redaction: dict | None) -> list[tuple[str, str, int, int]]:
+    """Figures the report builds as HTML sections, as standalone charts."""
+    out = []
+    aggregate = data.get("aggregate", {})
+    present = [n for n, *_ in __import__("plot_results").SYSTEMS if n in aggregate]
+
+    svg, w, h = composition_svg(aggregate, present)
+    if svg:
+        out.append(("wer-composition", *titled(
+            "What makes up the word error rate", "lower is better",
+            svg, w, h, CAPTIONS["composition"],
+        )))
+
+    if mono and stereo:
+        for title, key, slug in [
+            ("Transcription accuracy: mono against stereo-container files",
+             "WER_no_ins", "mono-vs-stereo-wer"),
+            ("Speaker confusion: mono against stereo-container files",
+             "DER_confusion", "mono-vs-stereo-der"),
+        ]:
+            svg, w, h = comparison_svg(mono, stereo, title, key)
+            if svg:
+                out.append((slug, *titled(
+                    title, "lower is better; the number at the right is the shift in points",
+                    svg, w, h,
+                    "All 66 stereo files measure 0.000-0.082 dB of channel separation "
+                    "against the 3.0 dB threshold their pipeline requires, so they are "
+                    "stereo containers holding duplicated mono and no system read "
+                    "speakers off a channel. This compares recording provenance, not "
+                    "channel access, and the shift between conditions is larger than "
+                    "any gap between systems.",
+                )))
+
+    if redaction:
+        svg, w, h = redaction_svg(redaction)
+        if svg:
+            out.append(("pii-redaction", *titled(
+                "PII redaction: over and under the human annotation",
+                "left of centre is left in the clear, right is redacted beyond the annotation",
+                svg, w, h,
+                "Gold spans are the curly braces in the human transcripts: 887 across "
+                "142 of 269 sessions. Recall is trustworthy because a gold span is real "
+                "PII; precision is a lower bound because only half the transcripts carry "
+                "any annotation, so a genuine identifier nobody marked counts against a "
+                "system that caught it.",
+            )))
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("results")
@@ -184,14 +284,20 @@ def main() -> int:
         "--partner", default=None,
         help="partner_wer.json from score_partner_wer.py; adds their chart",
     )
+    parser.add_argument("--mono", default=None, help="results.json for the mono subset")
+    parser.add_argument("--stereo", default=None, help="results.json for the stereo subset")
+    parser.add_argument("--redaction", default=None, help="redaction.json")
     parser.add_argument("--scale", type=float, default=2.0, help="PNG device scale")
     parser.add_argument("--chrome", default=CHROME)
     parser.add_argument("--no-png", action="store_true")
     args = parser.parse_args()
 
-    data = json.loads(Path(args.results).read_text())
+    data = load_results(args.results)
     if args.partner:
-        merge_partner(data, json.loads(Path(args.partner).read_text()))
+        merge_partner(data, load_results(args.partner))
+    mono = load_results(args.mono)
+    stereo = load_results(args.stereo)
+    redaction = load_results(args.redaction)
     aggregate = data.get("aggregate", {})
     per_visit = data.get("per_visit", {})
     present = [n for n in aggregate]
@@ -208,27 +314,14 @@ def main() -> int:
         print(f"warning: {args.chrome} not found; writing HTML only", file=sys.stderr)
 
     written = []
-    for title, key, agg_key, direction, caption in metrics_for(aggregate):
-        values = {n: aggregate.get(n, {}).get(agg_key) for n in present}
-        raw = collect(per_visit, key)
-        spreads = {n: quartiles(raw.get(n, [])) for n in present}
-        svg, width, height = chart_svg(
-            title, values, spreads, present, direction, caption=caption,
-            standalone=True, footer=CAPTIONS.get(agg_key, ""),
-        )
-        if not svg:
-            continue
 
-        name = slug(title)
+    def emit(name: str, title: str, svg: str, width: int, height: int) -> None:
         html_path = out / f"{name}.html"
         html_path.write_text(chart_page(title, svg, width, height, font_b64))
         written.append(html_path)
-
         if args.no_png or not chrome_available:
-            continue
-
-        page_w = width + PAD * 2
-        page_h = height + PAD * 2
+            return
+        page_w, page_h = width + PAD * 2, height + PAD * 2
         png_path = out / f"{name}.png"
         result = subprocess.run(
             [
@@ -241,13 +334,27 @@ def main() -> int:
             capture_output=True, text=True,
         )
         if result.returncode != 0 or not png_path.exists():
-            print(
-                f"error: PNG failed for {name}: {result.stderr.strip()[:200]}",
-                file=sys.stderr,
-            )
-            continue
+            print(f"error: PNG failed for {name}: {result.stderr.strip()[:200]}",
+                  file=sys.stderr)
+            return
         crop_png(png_path, int(page_w * args.scale), int(page_h * args.scale))
         written.append(png_path)
+
+    for title, key, agg_key, direction, caption in metrics_for(aggregate):
+        values = {n: aggregate.get(n, {}).get(agg_key) for n in present}
+        raw = collect(per_visit, key)
+        spreads = {n: quartiles(raw.get(n, [])) for n in present}
+        svg, width, height = chart_svg(
+            title, values, spreads, present, direction, caption=caption,
+            standalone=True, footer=CAPTIONS.get(agg_key, ""),
+        )
+        if not svg:
+            continue
+
+        emit(slug(title), title, svg, width, height)
+
+    for name, svg, width, height in extra_figures(data, mono, stereo, redaction):
+        emit(name, name.replace('-', ' '), svg, width, height)
 
     for path in written:
         print(f"  {path}  ({path.stat().st_size // 1024} KB)")

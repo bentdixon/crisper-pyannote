@@ -352,7 +352,7 @@ CONDITION_METRICS = [
 ]
 
 
-def redaction_panel(data: dict | None) -> str:
+def redaction_svg(data: dict | None) -> tuple[str, int, int]:
     """Over- and under-redaction as a diverging chart around the human gold.
 
     Centre is the human transcripts' own annotation. Everything left of it is
@@ -364,14 +364,14 @@ def redaction_panel(data: dict | None) -> str:
     its own bar is the tell.
     """
     if not data:
-        return ""
+        return "", 0, 0
     aggregate = data.get("aggregate", {})
     rows = [
         (n, parts, colour, aggregate[n]) for n, parts, colour, _ in SYSTEMS
         if n in aggregate
     ]
     if not rows:
-        return ""
+        return "", 0, 0
 
     line_h = 14
     max_lines = max(len(p) for _, p, _, _ in rows)
@@ -445,6 +445,19 @@ def redaction_panel(data: dict | None) -> str:
         f'<text x="{pad_l + plot_w}" y="{height - pad_b + 29}" text-anchor="end" '
         f'class="tick">redacted beyond the annotation &#8594;</text></svg>'
     )
+    return "".join(out), width, height
+
+
+def redaction_panel(data: dict | None) -> str:
+    """The diverging chart with its table and caveats, for the report page."""
+    svg, _, _ = redaction_svg(data)
+    if not svg:
+        return ""
+    aggregate = data.get("aggregate", {})
+    rows = [
+        (n, parts, colour, aggregate[n]) for n, parts, colour, _ in SYSTEMS
+        if n in aggregate
+    ]
 
     table_rows = []
     for name, label_parts, colour, stats in rows:
@@ -473,7 +486,7 @@ def redaction_panel(data: dict | None) -> str:
   system's redaction is matched to a gold span by aligning the two token sequences
   &mdash; "isaiah" against "[PERSON_NAME]" share no text, so they fall in the same
   difflib replace block, which is exactly the correspondence needed.</p>
-  {"".join(out)}
+  {svg}
   <div class="tablewrap"><table>
     <thead><tr><th>System</th><th>Gold spans</th><th>Redacted</th><th>Recall</th>
       <th>Precision</th><th>F1</th><th>Leak rate</th></tr></thead>
@@ -510,6 +523,18 @@ def redaction_panel(data: dict | None) -> str:
 
 def comparison_chart(mono: dict, stereo: dict, title: str, key: str,
                      direction: str = "lower is better") -> str:
+    """The dumbbell plus its heading, for the report page."""
+    svg, _, _ = comparison_svg(mono, stereo, title, key)
+    if not svg:
+        return ""
+    return (
+        f'<h3 class="condhead">{escape(title)}'
+        f'<span class="dir">{escape(direction)}; right-hand number is the shift '
+        f'in points</span></h3>' + svg
+    )
+
+
+def comparison_svg(mono: dict, stereo: dict, title: str, key: str) -> tuple[str, int, int]:
     """One row per system, a line joining its mono and stereo-container value.
 
     A dumbbell rather than two separate charts: the quantity of interest is the
@@ -524,7 +549,7 @@ def comparison_chart(mono: dict, stereo: dict, title: str, key: str,
             continue
         rows.append((name, parts, colour, left, right))
     if not rows:
-        return ""
+        return "", 0, 0
 
     line_h = 14
     max_lines = max(len(p) for _, p, _, _, _ in rows)
@@ -586,11 +611,7 @@ def comparison_chart(mono: dict, stereo: dict, title: str, key: str,
         f'<text x="{pad_l + 161}" y="{ly}" class="leg">stereo-container files '
         f'(n={len(stereo.get("per_visit", {}))})</text></svg>'
     )
-    return (
-        f'<h3 class="condhead">{escape(title)}'
-        f'<span class="dir">{escape(direction)}; right-hand number is the shift '
-        f'in points</span></h3>' + "".join(out)
-    )
+    return "".join(out), width, height
 
 
 def condition_table(data: dict, caption: str) -> str:
@@ -933,7 +954,7 @@ def chart_svg(
     return "".join(parts), width, height
 
 
-def composition_panel(aggregate: dict, present: list[str]) -> str:
+def composition_svg(aggregate: dict, present: list[str]) -> tuple[str, int, int]:
     """Stacked WER composition: insertions vs substitutions vs deletions.
 
     WER is the one number on this page that is a sum of parts, so it is the one
@@ -944,7 +965,7 @@ def composition_panel(aggregate: dict, present: list[str]) -> str:
     rows = [(n, parts, colour) for n, parts, colour, _ in SYSTEMS if n in present]
     rows = [r for r in rows if aggregate.get(r[0], {}).get("WER_ins") is not None]
     if not rows:
-        return ""
+        return "", 0, 0
 
     line_h = 14
     max_lines = max(len(p) for _, p, _ in rows)
@@ -1007,7 +1028,14 @@ def composition_panel(aggregate: dict, present: list[str]) -> str:
         f'<line x1="{pad_l}" y1="{pad_t}" x2="{pad_l}" y2="{height - pad_b}" '
         f'stroke="{AXIS}" stroke-width="1"/></svg>'
     )
+    return "".join(out), width, height
 
+
+def composition_panel(aggregate: dict, present: list[str]) -> str:
+    """The stacked composition with its legend, for the report page."""
+    svg, _, _ = composition_svg(aggregate, present)
+    if not svg:
+        return ""
     swatches = "".join(
         f'<span><span class="sw" style="background:{colour}"></span>'
         f'<b>{escape(label)}</b> &mdash; {escape(note)}</span>'
