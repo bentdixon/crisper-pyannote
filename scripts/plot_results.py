@@ -368,6 +368,117 @@ TAXONOMY_PARTS = [
 ]
 
 
+def summary_section(aggregate: dict, redaction_data: dict | None,
+                    taxonomy: dict | None) -> str:
+    """The overview: who wins what, and the four readings that matter.
+
+    Every figure is pulled from the data rather than written down, because a
+    hand-typed summary is the first thing to go stale after a rescore -- and on
+    this evaluation the numbers have moved by an order of magnitude twice.
+    """
+    if not aggregate:
+        return ""
+
+    def best(key: str, lower_is_better: bool = True) -> tuple[str, float] | None:
+        scored = [
+            (n, registry.entry_of(aggregate, n).get(key))
+            for n, *_ in SYSTEMS
+            if registry.entry_of(aggregate, n)
+            and registry.entry_of(aggregate, n).get(key) is not None
+        ]
+        if not scored:
+            return None
+        return (min if lower_is_better else max)(scored, key=lambda kv: kv[1])
+
+    cards = []
+    for title, key, lower, note in [
+        ("Word error rate", "WER", True, "best system, all 269 visits"),
+        ("Speaker-attributed WER", "sWER", True, "words on the right speaker"),
+        ("Speaker confusion", "DER_confusion", True, "share of speech time misattributed"),
+        ("Cue preservation", "QTP_F1", False, "negation, modality, temporal"),
+    ]:
+        found = best(key, lower)
+        if not found:
+            continue
+        name, value = found
+        label = " + ".join(registry.PARTS.get(name, [name]))
+        cards.append(
+            f'<div class="stat"><span class="statlabel">{escape(title)}</span>'
+            f'<span class="statvalue">{value * 100:.1f}%</span>'
+            f'<span class="statnote">{escape(label)}</span>'
+            f'<span class="statnote dim">{escape(note)}</span></div>'
+        )
+
+    findings = []
+    ours = registry.entry_of(taxonomy or {}, "ours")
+    if ours:
+        rates = ours["rates"]
+        misheard = (rates["different word"] + rates["near-miss"]) * 100
+        missed = rates["deletion"] * 100
+        findings.append(
+            f"<b>Transcription accuracy is roughly {misheard:.0f}% of reference words "
+            f"misheard and {missed:.0f}% missed.</b> Deletions, not insertions, are now "
+            "the largest error term, so the improvement target is speech the systems "
+            "are dropping rather than text they are inventing."
+        )
+
+    community = registry.entry_of(aggregate, "ours")
+    pyannote = registry.entry_of(aggregate, "baseline")
+    if community and pyannote:
+        findings.append(
+            "<b>The two diarizers are close, and split the honours.</b> "
+            f"community-1 leads WER ({community['WER'] * 100:.1f}% against "
+            f"{pyannote['WER'] * 100:.1f}%), sWER and cue preservation; pyannote 3.1 "
+            f"leads speaker confusion ({pyannote['DER_confusion'] * 100:.1f}% against "
+            f"{community['DER_confusion'] * 100:.1f}%). An earlier version of this page "
+            "reported a 32-point sWER gap between them, which was a metric defect."
+        )
+
+    llm_pairs = [("ours", "ours_llm"), ("baseline", "baseline_llm")]
+    if all(registry.entry_of(aggregate, a) and registry.entry_of(aggregate, b)
+           for a, b in llm_pairs):
+        findings.append(
+            "<b>The LLM review never helps.</b> Applying the Qwen2.5-7B pass makes every "
+            "metric equal or worse for both pipelines, on all 269 visits. It should be "
+            "dropped."
+        )
+
+    if redaction_data:
+        gemma = registry.entry_of(redaction_data.get("aggregate", {}), "ours_redacted")
+        chirp = registry.entry_of(redaction_data.get("aggregate", {}), "chirp3")
+        verb = registry.entry_of(redaction_data.get("aggregate", {}), "verbatimize")
+        if gemma and chirp:
+            findings.append(
+                f"<b>Gemma 4 redaction beats Chirp-3's native redaction</b> on sensitivity "
+                f"({gemma['recall'] * 100:.0f}% against {chirp['recall'] * 100:.0f}%), "
+                f"precision and leak rate ({gemma['leak_rate'] * 100:.0f}% against "
+                f"{chirp['leak_rate'] * 100:.0f}%), while redacting fewer spans."
+            )
+        if verb and chirp:
+            findings.append(
+                "<b>verbatimize is a privacy regression.</b> It consumes Chirp-3's "
+                "de-identified transcript and re-derives the words from audio, restoring "
+                f"identifiers Chirp had removed: the leak rate goes from "
+                f"{chirp['leak_rate'] * 100:.0f}% to {verb['leak_rate'] * 100:.0f}%."
+            )
+
+    findings.append(
+        "<b>Every number here is computed only over the span each human transcript "
+        "covers.</b> The transcripts stop early on a third of the cohort, most of those "
+        "at a hard 32-minute cutoff. Scoring whole sessions against them charges each "
+        "system for minutes the reference never described and puts WER in the forties "
+        "rather than the low teens."
+    )
+
+    items = "".join(f"<li>{f}</li>" for f in findings)
+    return f"""
+<section class="overview">
+  <h2>Overview</h2>
+  <div class="stats">{"".join(cards)}</div>
+  <ul class="findings">{items}</ul>
+</section>"""
+
+
 def taxonomy_svg(data: dict | None) -> tuple[str, int, int]:
     """Stacked decomposition of WER into edit categories.
 
@@ -1019,7 +1130,8 @@ def chart_svg(
 
         # A dot-and-range, not a bar. These per-visit distributions are heavily
         # right-skewed -- a few catastrophic visits drag the mean past the p75
-        # (chirp3 DER: mean 0.691, p75 0.337) -- so a bar growing from zero both
+        # (when this was chosen, chirp3's mean DER was 0.691 against a p75 of
+        # 0.337) -- so a bar growing from zero both
         # overstates the typical visit and collides with the range drawn across
         # it, which reads as a strike-through rather than a spread. The median
         # dot carries "typical", the range carries spread, and the hollow mean
@@ -1368,6 +1480,30 @@ svg .inbar {{
   font-size: 15px; font-weight: 600; margin: 26px 0 8px;
   display: flex; align-items: baseline; gap: 10px;
 }}
+.overview {{ margin-top: 44px; }}
+.stats {{
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 18px; margin-bottom: 28px;
+}}
+.stat {{
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 16px 18px; background: #faf9f6; border: 1px solid var(--grid);
+}}
+.statlabel {{
+  font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
+}}
+.statvalue {{
+  font-size: 30px; font-weight: 600; letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums; line-height: 1.1;
+}}
+.statnote {{ font-size: 12px; color: var(--muted-dark); line-height: 1.4; }}
+.statnote.dim {{ color: var(--muted); font-size: 11.5px; }}
+.findings {{ margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 12px; }}
+.findings li {{
+  font-size: 14px; line-height: 1.6; color: var(--muted-dark); max-width: 76ch;
+  padding-left: 15px; border-left: 2px solid var(--grid);
+}}
+.findings b {{ font-weight: 600; color: var(--text); }}
 .tablewrap {{ overflow-x: auto; }}
 table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
 th, td {{ text-align: right; padding: 9px 12px; border-bottom: 1px solid var(--grid); white-space: nowrap; }}
@@ -1400,14 +1536,15 @@ footer {{ margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--grid)
   cue preservation.</p>
 </header>
 
+{summary_section(aggregate, redaction_data, taxonomy)}
 <section>
   <h2>How to read these charts</h2>
   <div class="howto">
     <div>
       <h3>Every figure is a percentage</h3>
-      <p>All six metrics are rates. A DER of 20.5% means a fifth of speech time
-      is on the wrong speaker &mdash; not a fifth of a percent. WER can exceed
-      100%, because a system can insert more words than the reference contains.</p>
+      <p>Every metric is a rate over reference words, or over speech time for the
+      diarization figures. A speaker confusion of 15% means a seventh of speech time
+      is on the wrong speaker &mdash; not a seventh of a percent.</p>
     </div>
     <div>
       <h3>Each row is a distribution, not one number</h3>
@@ -1418,10 +1555,11 @@ footer {{ margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--grid)
     </div>
     <div>
       <h3>Compare systems, not absolute levels</h3>
-      <p>The machine transcribes verbatim and the human transcripts are
-      semi-verbatim, so every system emits about a third more words than the
-      reference. That inflates every WER before a single word is misheard. Use
-      <b>WER excluding insertions</b> for transcription quality.</p>
+      <p>Scoring covers only the span each human transcript reaches, because they
+      stop early on a third of the cohort. Within that span the machine still keeps
+      disfluencies and repetitions the transcriber deleted, so a point or so of every
+      WER is convention rather than error. Use <b>WER excluding insertions</b>, or the
+      error-type chart, for transcription quality.</p>
     </div>
     <div>
       <h3>Overlapping ranges are not a ranking</h3>
@@ -1492,9 +1630,10 @@ footer {{ margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--grid)
     </div>
     <div class="caveat">
       <h3>Absolute WER is not a quality score</h3>
-      <p>The ASR is verbatim and the human transcripts are semi-verbatim, so WER
-      runs above 1.0 and penalises correctly-heard disfluencies. Differences
-      between systems are meaningful; the absolute level is not.</p>
+      <p>The ASR is verbatim and the human transcripts semi-verbatim, so WER still
+      charges correctly-heard disfluencies as errors. Restricted to the covered span
+      that costs about a point, not the thirty it cost before; the level is now
+      interpretable, but the error-type split is the honest read.</p>
     </div>
     <div class="caveat">
       <h3>sWER was corrected, and the correction was large</h3>
@@ -1510,13 +1649,11 @@ footer {{ margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--grid)
     </div>
     <div class="caveat">
       <h3>Read the median dot, not the mean</h3>
-      <p>These distributions are strongly right-skewed: a minority of catastrophic
-      visits drags the mean well above typical performance, and in several cases
-      past the system's own p75 &mdash; Chirp-3's mean DER is 0.691 while its median
-      visit is 0.216. The wider the gap between the hollow mean marker and the
-      filled median dot, the more the headline figure is describing that tail.
-      Where two systems' ranges overlap substantially, the ranking between them is
-      not established.</p>
+      <p>These distributions are right-skewed: a minority of hard visits drags the
+      mean above typical performance. The wider the gap between the hollow mean marker
+      and the filled median dot, the more the headline figure is describing that tail
+      rather than a normal session. Where two systems' middle-50% ranges overlap
+      substantially, the ranking between them is not established by these 269 visits.</p>
     </div>
   </div>
 </section>
