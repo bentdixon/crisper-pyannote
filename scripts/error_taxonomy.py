@@ -191,6 +191,12 @@ def main(argv: list[str] | None = None) -> int:
     totals: dict[str, Counter] = {name: Counter() for name, _, _ in chosen}
     reference_words: Counter = Counter()
     scored: Counter = Counter()
+    # Per-visit rates as well as corpus totals. evaluate_systems reports the
+    # mean of per-visit WERs; pooling every edit over every reference word
+    # instead gives a different number (8 points higher here, because the long
+    # visits are the hard ones), and a taxonomy that does not reconstruct the
+    # headline figure cannot be used to explain it.
+    per_visit_rates: dict[str, list[dict[str, float]]] = {name: [] for name, _, _ in chosen}
 
     for index, visit in enumerate(visits, start=1):
         relative = visit.relative_to(cohort)
@@ -217,6 +223,7 @@ def main(argv: list[str] | None = None) -> int:
             totals[name].update(counts)
             reference_words[name] += length
             scored[name] += 1
+            per_visit_rates[name].append({c: counts[c] / length for c in CATEGORIES})
         if index % 25 == 0 or index == len(visits):
             logger.info("  %d/%d visits", index, len(visits))
 
@@ -226,15 +233,22 @@ def main(argv: list[str] | None = None) -> int:
             logger.error("%s: scored 0 visits -- a failure, not an absence", name)
             continue
         length = reference_words[name] or 1
-        rates = {c: counter[c] / length for c in CATEGORIES}
+        visits = per_visit_rates[name]
+        rates = {
+            c: sum(v[c] for v in visits) / len(visits) for c in CATEGORIES
+        }
         aggregate[name] = {
             "visits": scored[name],
             "reference_words": reference_words[name],
             "counts": {c: counter[c] for c in CATEGORIES},
+            # Mean of per-visit rates, matching how evaluate_systems reports
+            # WER, so these categories sum to the headline figure.
             "rates": rates,
+            "rates_pooled": {c: counter[c] / length for c in CATEGORIES},
             # Reconstructed WER. It must match the reported figure; if it does
             # not, the taxonomy is describing a different alignment than the
-            # one the headline number came from.
+            # one the headline number came from -- which is exactly how the
+            # speaker-ordered reference bug was found.
             "wer_reconstructed": sum(rates.values()),
         }
 
