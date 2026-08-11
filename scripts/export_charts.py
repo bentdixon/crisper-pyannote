@@ -30,7 +30,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from plot_results import (  # noqa: E402
     CAPTIONS,
     GRIDLINE,
-    METRICS,
     MUTED,
     MUTED_DARK,
     TEXT,
@@ -38,6 +37,8 @@ from plot_results import (  # noqa: E402
     chart_svg,
     collect,
     escape,
+    merge_partner,
+    metrics_for,
     quartiles,
 )
 
@@ -179,12 +180,18 @@ def main() -> int:
     parser.add_argument("results")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--font", default=None)
+    parser.add_argument(
+        "--partner", default=None,
+        help="partner_wer.json from score_partner_wer.py; adds their chart",
+    )
     parser.add_argument("--scale", type=float, default=2.0, help="PNG device scale")
     parser.add_argument("--chrome", default=CHROME)
     parser.add_argument("--no-png", action="store_true")
     args = parser.parse_args()
 
     data = json.loads(Path(args.results).read_text())
+    if args.partner:
+        merge_partner(data, json.loads(Path(args.partner).read_text()))
     aggregate = data.get("aggregate", {})
     per_visit = data.get("per_visit", {})
     present = [n for n in aggregate]
@@ -201,7 +208,7 @@ def main() -> int:
         print(f"warning: {args.chrome} not found; writing HTML only", file=sys.stderr)
 
     written = []
-    for title, key, agg_key, direction, caption in METRICS:
+    for title, key, agg_key, direction, caption in metrics_for(aggregate):
         values = {n: aggregate.get(n, {}).get(agg_key) for n in present}
         raw = collect(per_visit, key)
         spreads = {n: quartiles(raw.get(n, [])) for n in present}

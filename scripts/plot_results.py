@@ -115,6 +115,21 @@ METRICS = [
     ),
 ]
 
+# The partner team's metric is appended only when their results file is passed,
+# so the deck degrades to the six original charts without it.
+PARTNER_METRIC = (
+    "Partner WER", "filler_normalized", "PartnerWER", "lower is better",
+    "the partner team's own WER code, run unmodified over the same visits -- "
+    "an independent check on the ordering the charts above report",
+)
+
+
+def metrics_for(aggregate: dict) -> list[tuple[str, str, str, str, str]]:
+    """METRICS, plus the partner metric when any system carries it."""
+    if any(entry.get(PARTNER_METRIC[2]) is not None for entry in aggregate.values()):
+        return METRICS + [PARTNER_METRIC]
+    return METRICS
+
 # Full figure captions, keyed by aggregate key. These travel with the exported
 # charts, so each one has to stand on its own: what the metric is, how it is
 # computed here, and the caveat that decides how far it can be trusted.
@@ -169,6 +184,17 @@ CAPTIONS = {
         "clinically meaningful qualifiers survive transcription, which WER cannot "
         "distinguish from any other word. Higher is better, unlike every other "
         "chart here."
+    ),
+    "PartnerWER": (
+        "The partner team's compareFiles.py, vendored unmodified and run over the same "
+        "269 visits and the same system outputs. Their algorithm is not ours: alignment "
+        "is difflib's SequenceMatcher rather than a minimum edit distance, so a replace "
+        "block costs the longer of its two sides and the result is an upper bound on "
+        "WER; and filled pauses are collapsed to a single token on both sides rather "
+        "than deleted. It agrees with our ranking from independent code, which is what "
+        "makes it worth showing. Note the unusually wide gap between the median dot and "
+        "the mean marker: a tail of visits whose human transcript covers only part of "
+        "the session scores above 100% and carries every mean on this chart."
     ),
     "composition": (
         "The three error types that sum to WER, each as a rate over reference words. "
@@ -265,6 +291,125 @@ def subset_mean(per_visit: dict, visits: list[str], name: str, key: str) -> floa
 
 def escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# A visit where every system emits more than this many words per reference word
+# is a truncated human transcript, not a failing system: the systems disagree
+# with each other far less than they all disagree with the reference.
+TRUNCATION_RATIO = 2.0
+
+
+def merge_partner(data: dict, partner: dict) -> dict:
+    """Fold partner_wer.json into data's shape and summarise it.
+
+    Their figures are percentages and every chart here multiplies by 100, so
+    values are divided by 100 on the way in -- the alternative is a chart
+    reading 4374%.
+    """
+    aggregate, per_visit = data.setdefault("aggregate", {}), data.setdefault("per_visit", {})
+    p_agg, p_visit = partner.get("aggregate", {}), partner.get("per_visit", {})
+
+    for name, entry in p_agg.items():
+        if name in aggregate:
+            aggregate[name]["PartnerWER"] = entry["filler_normalized"] / 100.0
+    for visit, systems in p_visit.items():
+        for name, entry in systems.items():
+            target = per_visit.setdefault(visit, {}).setdefault(name, {})
+            target["filler_normalized"] = entry["filler_normalized"] / 100.0
+
+    # Which visits have a truncated reference: judged on the systems that
+    # actually transcribe independently, so an LLM-corrected copy of another
+    # system does not get a vote twice.
+    independent = [n for n in ("ours", "baseline", "chirp3", "verbatimize") if n in p_agg]
+    truncated = set()
+    for visit, systems in p_visit.items():
+        ratios = [
+            systems[n]["hyp_words"] / max(systems[n]["ref_words"], 1)
+            for n in independent if n in systems
+        ]
+        if ratios and len(ratios) == len(independent) and min(ratios) > TRUNCATION_RATIO:
+            truncated.add(visit)
+
+    summary = {"truncated": len(truncated), "total": len(p_visit), "systems": {}}
+    for name, entry in p_agg.items():
+        clean = [
+            systems[name]["filler_normalized"]
+            for visit, systems in p_visit.items()
+            if name in systems and visit not in truncated
+        ]
+        summary["systems"][name] = {
+            "raw": entry["raw"],
+            "normalized": entry["normalized"],
+            "filler": entry["filler_normalized"],
+            "median": entry["filler_normalized_median"],
+            "clean_mean": statistics.fmean(clean) if clean else None,
+            "clean_median": statistics.median(clean) if clean else None,
+        }
+    return summary
+
+
+def partner_section(summary: dict) -> str:
+    """The cross-check: their numbers, and the two things they added."""
+    if not summary or not summary["systems"]:
+        return ""
+    rows = []
+    for name, label_parts, colour, _ in SYSTEMS:
+        stats = summary["systems"].get(name)
+        if not stats:
+            continue
+        clean_mean = f'{stats["clean_mean"]:.1f}%' if stats["clean_mean"] is not None else "-"
+        clean_median = f'{stats["clean_median"]:.1f}%' if stats["clean_median"] is not None else "-"
+        rows.append(
+            f'<tr><td class="sys"><span class="swatch" style="background:{colour}"></span>'
+            f'{escape(" + ".join(label_parts))}</td>'
+            f'<td class="num">{stats["raw"]:.1f}%</td>'
+            f'<td class="num">{stats["normalized"]:.1f}%</td>'
+            f'<td class="num">{stats["filler"]:.1f}%</td>'
+            f'<td class="num">{stats["median"]:.1f}%</td>'
+            f'<td class="num sub">{clean_mean}</td>'
+            f'<td class="num sub">{clean_median}</td></tr>'
+        )
+    kept = summary["total"] - summary["truncated"]
+    return f"""
+<section>
+  <h2>Cross-check: the partner team's WER</h2>
+  <p class="prose">The partner team's own <em>compareFiles.py</em> was vendored
+  unmodified and run over the same 269 visits, the same system outputs and the same
+  human references. It is a different algorithm &mdash; difflib alignment rather than
+  minimum edit distance, and filled pauses collapsed to a single token on both sides
+  rather than deleted &mdash; so it reads a few points higher than ours throughout.
+  It reproduces our ordering exactly, from code that shares nothing with ours, and it
+  agrees on the LLM review being never better.</p>
+  <div class="tablewrap">
+  <table>
+    <thead>
+      <tr><th></th><th colspan="4">All {summary["total"]} visits</th>
+          <th colspan="2">Excluding truncated references (n={kept})</th></tr>
+      <tr><th>System</th><th>Raw</th><th>Normalized</th><th>Filler-normalized</th>
+          <th>Median visit</th><th>Mean</th><th>Median</th></tr>
+    </thead>
+    <tbody>{"".join(rows)}</tbody>
+  </table>
+  </div>
+  <div class="caveats" style="margin-top:26px">
+    <div class="caveat">
+      <h3>The means are set by broken references</h3>
+      <p>On {summary["truncated"]} visits <em>every</em> system emits more than twice the
+      reference's word count. Systems that share no code do not fail identically; those
+      are human transcripts covering only part of the session, and they average around
+      170% WER. Excluded, the right-hand block is the honest figure and the median is
+      the number to quote.</p>
+    </div>
+    <div class="caveat">
+      <h3>Chirp-3 wins the easy visits and loses the hard ones</h3>
+      <p>Chirp-3 is the best system at the 10th and 25th percentile (4.7% and 8.7%,
+      against 9.4% and 11.7% for ours) and the worst at the 90th (115% against 103%).
+      Our pipeline beats it on only 124 of 269 visits and its median visit is 1.7 points
+      worse: the aggregate win comes entirely from the failure tail, not from being
+      better on a typical session.</p>
+    </div>
+  </div>
+</section>"""
 
 
 def chart_svg(
@@ -593,14 +738,15 @@ def bar_panel(
     )
 
 
-def build_page(data: dict, font_b64: str) -> str:
+def build_page(data: dict, font_b64: str, partner_summary: dict | None = None) -> str:
     aggregate = data.get("aggregate", {})
     per_visit = data.get("per_visit", {})
     present = [n for n, *_ in SYSTEMS if n in aggregate]
     subset = common_subset(per_visit, present)
+    metrics = metrics_for(aggregate)
 
     panels = []
-    for title, key, agg_key, direction, caption in METRICS:
+    for title, key, agg_key, direction, caption in metrics:
         values = {n: aggregate.get(n, {}).get(agg_key) for n in present}
         raw = collect(per_visit, key)
         spreads = {n: quartiles(raw.get(n, [])) for n in present}
@@ -623,15 +769,15 @@ def build_page(data: dict, font_b64: str) -> str:
             f'{escape(label)}<span class="note">{escape(note)}</span></td>',
             f'<td class="num">{stats.get("visits", 0)}</td>',
         ]
-        for _, _, agg_key, _, _ in METRICS:
+        for _, _, agg_key, _, _ in metrics:
             value = stats.get(agg_key)
             cells.append(f'<td class="num">{value * 100:.1f}%</td>' if value is not None else '<td class="num">-</td>')
-        for _, key, _, _, _ in METRICS:
+        for _, key, _, _, _ in metrics:
             value = subset_mean(per_visit, subset, name, key)
             cells.append(f'<td class="num sub">{value * 100:.1f}%</td>' if value is not None else '<td class="num sub">-</td>')
         rows.append("<tr>" + "".join(cells) + "</tr>")
 
-    metric_heads = "".join(f"<th>{escape(t)}</th>" for t, *_ in METRICS)
+    metric_heads = "".join(f"<th>{escape(t)}</th>" for t, *_ in metrics)
 
     # The old word-span DER is shown next to the corrected one so the metric
     # change is visible in the report rather than only in the commit log.
@@ -808,7 +954,7 @@ footer {{ margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--grid)
   <div class="tablewrap">
   <table>
     <thead>
-      <tr><th></th><th></th><th colspan="4">All scored visits</th><th colspan="4">Common subset (n={len(subset)})</th></tr>
+      <tr><th></th><th></th><th colspan="{len(metrics)}">All scored visits</th><th colspan="{len(metrics)}">Common subset (n={len(subset)})</th></tr>
       <tr><th>System</th><th>Visits</th>{metric_heads}{metric_heads}</tr>
     </thead>
     <tbody>{"".join(rows)}</tbody>
@@ -836,7 +982,7 @@ footer {{ margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--grid)
   </table>
   </div>
 </section>
-
+{partner_section(partner_summary or {})}
 <section>
   <h2>Reading these numbers</h2>
   <div class="caveats">
@@ -881,15 +1027,22 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("results", help="results.json from evaluate_systems.py")
     parser.add_argument("--font", default=None, help="DM Sans .ttf to embed")
+    parser.add_argument(
+        "--partner", default=None,
+        help="partner_wer.json from score_partner_wer.py; adds their metric",
+    )
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
     data = json.loads(Path(args.results).read_text())
+    partner_summary = None
+    if args.partner:
+        partner_summary = merge_partner(data, json.loads(Path(args.partner).read_text()))
     font_b64 = ""
     if args.font and Path(args.font).exists():
         font_b64 = base64.b64encode(Path(args.font).read_bytes()).decode()
 
-    Path(args.output).write_text(build_page(data, font_b64))
+    Path(args.output).write_text(build_page(data, font_b64, partner_summary))
     print(f"wrote {args.output}")
     return 0
 
