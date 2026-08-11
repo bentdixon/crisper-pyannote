@@ -35,7 +35,19 @@ insertions -- which used to carry half the total -- are about a point.
 The partner team's independent implementation agrees on the ordering:
 14.3% / 15.7% / 18.9% filler-normalized (`partner-wer.csv`).
 
-## Figures (`figures/`, PNG at 2x)
+## Figures (PNG at 2x)
+
+Two sets of the same twelve charts:
+
+- **`figures/`** — with the explanatory caption under each chart. Use these when
+  the figure travels on its own and has to carry its own caveats.
+- **`figures-clean/`** — title, direction, values, axes and colour key only, no
+  prose. Use these in slides and papers where the surrounding text supplies the
+  context.
+
+The key stays in the clean set on purpose: several of these charts stack seven
+colours, and without the legend they cannot be read at all.
+
 
 | File | What it shows |
 |---|---|
@@ -50,7 +62,8 @@ The partner team's independent implementation agrees on the ordering:
 | `pii-redaction.png` | Over- and under-redaction against the human annotation |
 | `partner-wer.png` | The partner team's own WER implementation, run unmodified |
 
-Vector versions of every chart are inline in `eval_report.html`.
+Vector versions of every chart are inline in `eval_report.html`. Regenerate
+either set with `scripts/export_charts.py`, adding `--clean` for the second.
 
 ## Tables (`tables/`, CSV)
 
@@ -129,6 +142,7 @@ uv run python scripts/export_charts.py data/results.json \
     --partner data/partner_wer.json --mono data/results_mono.json \
     --stereo data/results_stereo.json --redaction data/redaction.json \
     --taxonomy data/taxonomy.json --output-dir figures --font dmsans.ttf
+# same again with --clean --output-dir figures-clean for the caption-free set
 uv run python scripts/export_tables.py --output-dir tables \
     --results data/results.json --mono data/results_mono.json \
     --stereo data/results_stereo.json --taxonomy data/taxonomy.json \
