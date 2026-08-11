@@ -785,14 +785,19 @@ def exposure_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int
 
     ceiling = max(v for _, _, _, values in rows for v in values) or 1
     # Buckets: clean, a handful, many. The first is the number people act on.
-    buckets = [(0, 0, "none"), (1, 4, "1-4"), (5, 19, "5-19"), (20, ceiling, "20+")]
+    buckets = [
+        (0, 0, "no identifiers left open"),
+        (1, 4, "1-4 left open"),
+        (5, 19, "5-19 left open"),
+        (20, ceiling, "20+ left open"),
+    ]
     shades = ["#1baf7a", "#eda100", "#e8834a", "#c0392b"]
 
     key, key_height = ("", 0)
     if legend:
         key, key_height = swatch_legend(
             [
-                (f"{label} identifier locations left open", shades[i], "")
+                (label, shades[i], "")
                 for i, (_, _, label) in enumerate(buckets)
             ],
             plot_w + pad_l, height + 8, columns=2,

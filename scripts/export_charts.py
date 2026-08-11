@@ -43,6 +43,7 @@ from plot_results import (  # noqa: E402
     merge_partner,
     metrics_for,
     quartiles,
+    exposure_svg,
     leak_type_svg,
     redaction_svg,
     taxonomy_svg,
@@ -235,6 +236,7 @@ def titled(title: str, subtitle: str, svg: str, width: int, height: int,
 def extra_figures(data: dict, mono: dict | None, stereo: dict | None,
                   redaction: dict | None, taxonomy: dict | None = None,
                   clean: bool = False, leaks: dict | None = None,
+                  exposure: dict | None = None,
                   ) -> list[tuple[str, str, int, int]]:
     """Figures the report builds as HTML sections, as standalone charts."""
     out = []
@@ -284,6 +286,20 @@ def extra_figures(data: dict, mono: dict | None, stereo: dict | None,
                     "any gap between systems.", clean=clean,
                 )))
 
+    svg, w, h = exposure_svg(exposure, legend=True)
+    if svg:
+        out.append(("pii-exposure-per-transcript", *titled(
+            "Per-transcript PII exposure",
+            "how many known identifier locations each transcript still leaves open",
+            svg, w, h,
+            "A PII location is any position the human transcriber marked -- including "
+            "the 577 spans already scrubbed to {redacted}, which no verbatim search can "
+            "test -- or where another system emitted a placeholder. A system is exposed "
+            "where it redacted nothing. Judged leave-one-out, so a system is never "
+            "scored on locations it proposed itself; including them hands the win to "
+            "whichever redactor is most aggressive.", clean=clean,
+        )))
+
     svg, w, h = leak_type_svg(leaks, legend=True)
     if svg:
         out.append(("pii-leak-by-type", *titled(
@@ -327,6 +343,7 @@ def main() -> int:
     parser.add_argument("--redaction", default=None, help="redaction.json")
     parser.add_argument("--taxonomy", default=None, help="taxonomy.json")
     parser.add_argument("--leaks", default=None, help="leak_by_type.json")
+    parser.add_argument("--exposure", default=None, help="exposure.json")
     parser.add_argument(
         "--clean", action="store_true",
         help=(
@@ -347,6 +364,7 @@ def main() -> int:
     stereo = load_results(args.stereo)
     redaction = load_results(args.redaction)
     leaks = json.loads(Path(args.leaks).read_text()) if args.leaks else None
+    exposure = json.loads(Path(args.exposure).read_text()) if args.exposure else None
     taxonomy = json.loads(Path(args.taxonomy).read_text()) if args.taxonomy else None
     aggregate = data.get("aggregate", {})
     per_visit = data.get("per_visit", {})
@@ -406,7 +424,7 @@ def main() -> int:
 
         emit(slug(title), title, svg, width, height)
 
-    for name, svg, width, height in extra_figures(data, mono, stereo, redaction, taxonomy, clean=args.clean, leaks=leaks):
+    for name, svg, width, height in extra_figures(data, mono, stereo, redaction, taxonomy, clean=args.clean, leaks=leaks, exposure=exposure):
         emit(name, name.replace('-', ' '), svg, width, height)
 
     for path in written:
