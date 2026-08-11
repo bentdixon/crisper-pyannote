@@ -77,22 +77,30 @@ def normalize_token(token: str) -> str:
 
 
 def human_tokens(path: Path) -> tuple[list[str], list[dict]]:
-    """Tokenize a human transcript, returning tokens and gold span records.
-
-    Each span record carries the token index range it covers, so a span can be
-    located in the aligned system sequence, and its surface text when the
-    transcriber left one.
-    """
-    tokens: list[str] = []
-    spans: list[dict] = []
+    """Tokenize a whole human transcript file."""
+    lines = []
     for line in path.read_text().splitlines():
         line = line.strip()
         if not line:
             continue
         match = TURN_PREFIX.match(line)
-        text = match.group(3) if match else line
+        lines.append(match.group(3) if match else line)
+    return tokens_from_texts(lines)
 
-        # Walk the line so a span's token indices are known as it is consumed.
+
+def tokens_from_texts(texts: list[str]) -> tuple[list[str], list[dict]]:
+    """Tokens and gold span records from already-parsed turn texts.
+
+    Callers that clip the hypothesis to a coverage window must build the
+    reference from the same window, or difflib aligns a whole-session reference
+    against a partial hypothesis and every gold span past the window is charged
+    as unprotected. Each span record carries its token index range, so a span
+    can be located in the aligned system sequence.
+    """
+    tokens: list[str] = []
+    spans: list[dict] = []
+    for text in texts:
+        # Walk the text so a span's token indices are known as it is consumed.
         position = 0
         for found in GOLD_SPAN.finditer(text):
             tokens.extend(text[position:found.start()].split())
@@ -183,9 +191,19 @@ def context(tokens: list[str], start: int, end: int, width: int = 7) -> str:
     return " ".join(tokens[max(start - width, 0):min(end + width, len(tokens))])
 
 
-def score_visit(human: Path, words: list[dict]) -> dict:
-    """Redaction metrics for one visit, with per-span detail for inspection."""
-    ref_tokens, gold = human_tokens(human)
+def score_visit(human: Path | list[dict], words: list[dict]) -> dict:
+    """Redaction metrics for one visit, with per-span detail for inspection.
+
+    `human` is either the transcript path or the already-windowed turn list.
+    Pass turns whenever the words have been clipped to a coverage window: a
+    whole-file reference against a clipped hypothesis charges every gold span
+    past the window as unprotected, which under a 30-minute cap moved exposure
+    by 3-4 points.
+    """
+    if isinstance(human, Path):
+        ref_tokens, gold = human_tokens(human)
+    else:
+        ref_tokens, gold = tokens_from_texts([t["text"] for t in human])
     hyp_tokens, predicted = system_tokens(words)
     blocks = index_map(ref_tokens, hyp_tokens)
 

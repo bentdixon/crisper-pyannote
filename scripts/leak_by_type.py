@@ -124,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
             words = clip_words(words, window_start, window_end)
             if not words:
                 continue
-            result = redaction.score_visit(human, words)
+            result = redaction.score_visit(turns, words)
             redactions[name] += result["predicted_spans"]
             for order, span in enumerate(result["spans"]):
                 if not span["testable"]:

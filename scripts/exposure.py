@@ -173,7 +173,9 @@ def main(argv: list[str] | None = None) -> int:
         if not turns:
             continue
 
-        ref_tokens, gold = redaction.human_tokens(human)
+        # Reference built from the windowed turns, so gold spans and the
+        # alignment describe the same stretch of audio as the clipped words.
+        ref_tokens, gold = redaction.tokens_from_texts([t['text'] for t in turns])
 
         # Each system's placeholders, in reference coordinates.
         placed: dict[str, list[tuple[int, int]]] = {}

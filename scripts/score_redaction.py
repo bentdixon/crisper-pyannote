@@ -128,7 +128,9 @@ def main(argv: list[str] | None = None) -> int:
         turns, window_start, window_end = covered_turns(turns)
         if not turns:
             continue
-        gold_tokens, gold_spans = redaction.human_tokens(human)
+        gold_tokens, gold_spans = redaction.tokens_from_texts(
+            [t['text'] for t in turns]
+        )
         if gold_spans:
             gold_visits += 1
         elif args.gold_only:
@@ -145,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
             words = clip_words(words, window_start, window_end)
             if not words:
                 continue
-            result = redaction.score_visit(human, words)
+            result = redaction.score_visit(turns, words)
             scored[name] += 1
             for key in (
                 "gold_spans", "predicted_spans", "true_positives",
