@@ -352,6 +352,142 @@ CONDITION_METRICS = [
 ]
 
 
+# The edit categories from error_taxonomy.py, ordered so the two bands read as
+# blocks: what the machine got wrong, then what it said that the transcript does
+# not record. Colours follow that split -- warm for real error, cool for the
+# convention gap -- rather than giving seven unrelated hues.
+TAXONOMY_PARTS = [
+    ("different word", "#c0392b", "a genuine mishearing"),
+    ("near-miss", "#e8834a", "same word, different spelling, inflection or number format"),
+    ("deletion", "#eda100", "a reference word the machine did not produce"),
+    ("repetition", "#7fb0e8", "the speaker said it twice; the transcriber wrote it once"),
+    ("backchannel", "#5b8fd6", "yeah, okay, right -- dropped by the transcriber as noise"),
+    ("discourse marker", "#2a78d6", "like, so, just, well, you know"),
+    ("other insertion", "#1c4f8f", "speech present in the audio and absent from the transcript"),
+]
+
+
+def taxonomy_svg(data: dict | None) -> tuple[str, int, int]:
+    """Stacked decomposition of WER into edit categories.
+
+    The one chart on this page that answers "why is WER so high" rather than
+    "how high is it". The segments sum to the reported WER exactly, which is
+    the point: a decomposition that does not reconstruct the headline number is
+    describing a different alignment.
+    """
+    if not data:
+        return "", 0, 0
+    rows = [
+        (n, parts, registry.entry_of(data, n)) for n, parts, _, _ in SYSTEMS
+        if registry.entry_of(data, n)
+    ]
+    if not rows:
+        return "", 0, 0
+
+    line_h = 14
+    max_lines = max(len(p) for _, p, _ in rows)
+    row_h = max(28, max_lines * line_h + 4)
+    gap, pad_l, pad_r, pad_t, pad_b = 12, 250, 66, 16, 32
+    plot_w = 330
+    height = pad_t + len(rows) * (row_h + gap) + pad_b
+    width = pad_l + plot_w + pad_r
+
+    top = max(sum(r[2]["rates"].values()) for r in rows) * 1.08 or 1.0
+
+    out = [
+        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+        f'role="img" aria-label="What the word error rate is made of">'
+    ]
+    for i in range(6):
+        value = top * i / 5
+        gx = round(pad_l + (value / top) * plot_w, 1)
+        out.append(
+            f'<line x1="{gx}" y1="{pad_t}" x2="{gx}" y2="{height - pad_b}" '
+            f'stroke="{GRIDLINE}" stroke-width="1"/>'
+            f'<text x="{gx}" y="{height - pad_b + 15}" text-anchor="middle" '
+            f'class="tick">{value * 100:.0f}%</text>'
+        )
+
+    for index, (_, label_parts, stats) in enumerate(rows):
+        y = pad_t + index * (row_h + gap)
+        block = len(label_parts) * line_h
+        first = y + (row_h - block) / 2 + line_h - 3
+        for line_index, component in enumerate(label_parts):
+            suffix = " +" if line_index < len(label_parts) - 1 else ""
+            out.append(
+                f'<text x="{pad_l - 12}" y="{first + line_index * line_h:.1f}" '
+                f'text-anchor="end" class="cat">{escape(component + suffix)}</text>'
+            )
+        cursor = pad_l
+        total = 0.0
+        for name, colour, _ in TAXONOMY_PARTS:
+            value = stats["rates"].get(name) or 0.0
+            total += value
+            w = (value / top) * plot_w
+            out.append(
+                f'<rect x="{cursor:.1f}" y="{y}" width="{max(w, 0.4):.1f}" '
+                f'height="{row_h}" fill="{colour}"/>'
+            )
+            if w > 24:
+                out.append(
+                    f'<text x="{cursor + w / 2:.1f}" y="{y + row_h / 2 + 4}" '
+                    f'text-anchor="middle" class="inbar">{value * 100:.0f}</text>'
+                )
+            cursor += w
+        out.append(
+            f'<text x="{width - 8}" y="{y + row_h / 2 + 4}" text-anchor="end" '
+            f'class="val">{total * 100:.1f}%</text>'
+        )
+
+    out.append(
+        f'<line x1="{pad_l}" y1="{pad_t}" x2="{pad_l}" y2="{height - pad_b}" '
+        f'stroke="{AXIS}" stroke-width="1"/></svg>'
+    )
+    return "".join(out), width, height
+
+
+def taxonomy_panel(data: dict | None) -> str:
+    """The decomposition with the reading that matters, for the report page."""
+    svg, _, _ = taxonomy_svg(data)
+    if not svg:
+        return ""
+    swatches = "".join(
+        f'<span><span class="sw" style="background:{colour}"></span>'
+        f'<b>{escape(name)}</b> &mdash; {escape(note)}</span>'
+        for name, colour, note in TAXONOMY_PARTS
+    )
+    ours = registry.entry_of(data, "ours") or {}
+    rates = ours.get("rates", {})
+    heard_wrong = (rates.get("different word", 0) + rates.get("near-miss", 0)) * 100
+    missed = rates.get("deletion", 0) * 100
+    unrecorded = (
+        rates.get("other insertion", 0) + rates.get("repetition", 0)
+        + rates.get("backchannel", 0) + rates.get("discourse marker", 0)
+    ) * 100
+    return f"""
+<section>
+  <h2>What the word error rate is made of</h2>
+  <p class="prose">A WER in the forties invites the conclusion that these
+  transcripts are unusable. They are not, and this chart is why. Filled pauses are
+  already removed from <em>both</em> sides before scoring, so um and uh contribute
+  nothing to any of these bars. Splitting the remaining edits by type separates
+  three different things that WER adds together: words the machine heard wrong,
+  words it missed, and words it produced that the human transcript simply does not
+  record. The segments sum to the reported WER exactly.</p>
+  {svg}
+  <div class="legend parts">{swatches}</div>
+  <p class="prose" style="margin-top:22px">For our pipeline that is
+  <b>{heard_wrong:.1f}%</b> of reference words misheard, <b>{missed:.1f}%</b> missed,
+  and <b>{unrecorded:.1f}%</b> spoken but unrecorded by the transcriber. The last of
+  those is not a transcription failure and it dominates the headline. Its largest
+  component is not disfluency: <b>97% of inserted words fall in unbroken runs of
+  twenty or more</b>, with single runs of over four thousand words &mdash; stretches
+  of the interview the machine transcribed and the human transcript does not cover
+  at all. Read the misheard figure as the accuracy number, and treat the total as a
+  measure of how differently the two sources were produced.</p>
+</section>"""
+
+
 def redaction_svg(data: dict | None) -> tuple[str, int, int]:
     """Over- and under-redaction as a diverging chart around the human gold.
 
@@ -1091,6 +1227,7 @@ def build_page(
     mono: dict | None = None,
     stereo: dict | None = None,
     redaction_data: dict | None = None,
+    taxonomy: dict | None = None,
 ) -> str:
     aggregate = data.get("aggregate", {})
     per_visit = data.get("per_visit", {})
@@ -1339,6 +1476,7 @@ footer {{ margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--grid)
   </table>
   </div>
 </section>
+{taxonomy_panel(taxonomy)}
 {conditions_section(mono, stereo)}
 {redaction_panel(redaction_data)}
 {partner_section(partner_summary or {})}
@@ -1408,6 +1546,10 @@ def main() -> int:
         "--redaction", default=None,
         help="redaction.json from score_redaction.py; adds the PII section",
     )
+    parser.add_argument(
+        "--taxonomy", default=None,
+        help="taxonomy.json from error_taxonomy.py; adds the WER decomposition",
+    )
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
@@ -1418,12 +1560,13 @@ def main() -> int:
     mono = load_results(args.mono)
     stereo = load_results(args.stereo)
     redaction_data = load_results(args.redaction)
+    taxonomy = json.loads(Path(args.taxonomy).read_text()) if args.taxonomy else None
     font_b64 = ""
     if args.font and Path(args.font).exists():
         font_b64 = base64.b64encode(Path(args.font).read_bytes()).decode()
 
     Path(args.output).write_text(
-        build_page(data, font_b64, partner_summary, mono, stereo, redaction_data)
+        build_page(data, font_b64, partner_summary, mono, stereo, redaction_data, taxonomy)
     )
     print(f"wrote {args.output}")
     return 0

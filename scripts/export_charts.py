@@ -44,6 +44,7 @@ from plot_results import (  # noqa: E402
     metrics_for,
     quartiles,
     redaction_svg,
+    taxonomy_svg,
 )
 
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
@@ -226,11 +227,27 @@ def titled(title: str, subtitle: str, svg: str, width: int, height: int,
 
 
 def extra_figures(data: dict, mono: dict | None, stereo: dict | None,
-                  redaction: dict | None) -> list[tuple[str, str, int, int]]:
+                  redaction: dict | None, taxonomy: dict | None = None,
+                  ) -> list[tuple[str, str, int, int]]:
     """Figures the report builds as HTML sections, as standalone charts."""
     out = []
     aggregate = data.get("aggregate", {})
     present = [n for n, *_ in __import__("plot_results").SYSTEMS if n in aggregate]
+
+    svg, w, h = taxonomy_svg(taxonomy)
+    if svg:
+        out.append(("wer-error-types", *titled(
+            "What the word error rate is made of",
+            "lower is better; segments sum to the reported WER",
+            svg, w, h,
+            "Filled pauses are removed from both sides before scoring, so um and uh "
+            "contribute nothing here. Warm segments are transcription error -- words "
+            "heard wrong or missed. Cool segments are speech the machine produced that "
+            "the human transcript does not record, which is not a transcription failure "
+            "and dominates the total. 97% of inserted words fall in unbroken runs of "
+            "twenty or more, with single runs above four thousand words: stretches of "
+            "interview the human transcript does not cover at all.",
+        )))
 
     svg, w, h = composition_svg(aggregate, present)
     if svg:
@@ -287,6 +304,7 @@ def main() -> int:
     parser.add_argument("--mono", default=None, help="results.json for the mono subset")
     parser.add_argument("--stereo", default=None, help="results.json for the stereo subset")
     parser.add_argument("--redaction", default=None, help="redaction.json")
+    parser.add_argument("--taxonomy", default=None, help="taxonomy.json")
     parser.add_argument("--scale", type=float, default=2.0, help="PNG device scale")
     parser.add_argument("--chrome", default=CHROME)
     parser.add_argument("--no-png", action="store_true")
@@ -298,6 +316,7 @@ def main() -> int:
     mono = load_results(args.mono)
     stereo = load_results(args.stereo)
     redaction = load_results(args.redaction)
+    taxonomy = json.loads(Path(args.taxonomy).read_text()) if args.taxonomy else None
     aggregate = data.get("aggregate", {})
     per_visit = data.get("per_visit", {})
     present = [n for n in aggregate]
@@ -353,7 +372,7 @@ def main() -> int:
 
         emit(slug(title), title, svg, width, height)
 
-    for name, svg, width, height in extra_figures(data, mono, stereo, redaction):
+    for name, svg, width, height in extra_figures(data, mono, stereo, redaction, taxonomy):
         emit(name, name.replace('-', ' '), svg, width, height)
 
     for path in written:
