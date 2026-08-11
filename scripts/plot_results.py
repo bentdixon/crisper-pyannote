@@ -83,6 +83,18 @@ SYSTEMS = [
         "#b8791f",
         "their pipeline with the stereo channel path disabled",
     ),
+    (
+        "ours_redacted",
+        ["CrisperWhisper 2.0 ASR", "pyannote community-1", "Gemma 4 31B redaction"],
+        "#5b4bd6",
+        "our pipeline, PII redacted in windows by Gemma",
+    ),
+    (
+        "baseline_redacted",
+        ["CrisperWhisper 2.0 ASR", "pyannote 3.1", "Gemma 4 31B redaction"],
+        "#9a8ae8",
+        "their pipeline, PII redacted in windows by Gemma",
+    ),
 ]
 
 # (title, per-visit key, aggregate key, direction, caption)
@@ -367,6 +379,162 @@ CONDITION_METRICS = [
     ("DER confusion", "DER_confusion", "lower is better"),
     ("sWER", "sWER", "lower is better"),
 ]
+
+
+def redaction_panel(data: dict | None) -> str:
+    """Over- and under-redaction as a diverging chart around the human gold.
+
+    Centre is the human transcripts' own annotation. Everything left of it is
+    identifying material the system left in the clear; everything right of it is
+    material the system redacted that the transcribers did not mark. The two are
+    drawn as one span per system rather than as a single net figure because they
+    cancel: a redactor that misses ten names and invents ten places nets zero and
+    is wrong twice over. The dot is that net, and its distance from the centre of
+    its own bar is the tell.
+    """
+    if not data:
+        return ""
+    aggregate = data.get("aggregate", {})
+    rows = [
+        (n, parts, colour, aggregate[n]) for n, parts, colour, _ in SYSTEMS
+        if n in aggregate
+    ]
+    if not rows:
+        return ""
+
+    line_h = 14
+    max_lines = max(len(p) for _, p, _, _ in rows)
+    row_h = max(34, max_lines * line_h + 8)
+    gap, pad_l, pad_r, pad_t, pad_b = 14, 250, 62, 20, 34
+    plot_w = 340
+    height = pad_t + len(rows) * (row_h + gap) + pad_b
+    width = pad_l + plot_w + pad_r
+
+    left = max((r[3]["under_rate"] for r in rows), default=0.5) or 0.5
+    right = max((r[3]["over_rate"] for r in rows), default=0.5) or 0.5
+    # A shared scale either side of zero would squash the under-redaction arm to
+    # invisibility (over-redaction runs several times larger), so each side gets
+    # its own scale and the axis is labelled to say so.
+    left = max(left * 1.15, 0.05)
+    right = max(right * 1.15, 0.05)
+    zero = pad_l + plot_w * (left / (left + right))
+
+    def x(value: float) -> float:
+        if value < 0:
+            return zero - (abs(value) / left) * (zero - pad_l)
+        return zero + (value / right) * (pad_l + plot_w - zero)
+
+    out = [
+        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+        f'role="img" aria-label="Over and under redaction by system">'
+    ]
+    for fraction in (0.5, 1.0):
+        for value in (-left * fraction, right * fraction):
+            gx = round(x(value), 1)
+            out.append(
+                f'<line x1="{gx}" y1="{pad_t}" x2="{gx}" y2="{height - pad_b}" '
+                f'stroke="{GRIDLINE}" stroke-width="1"/>'
+                f'<text x="{gx}" y="{height - pad_b + 15}" text-anchor="middle" '
+                f'class="tick">{abs(value) * 100:.0f}%</text>'
+            )
+
+    for index, (name, label_parts, colour, stats) in enumerate(rows):
+        y = pad_t + index * (row_h + gap)
+        block = len(label_parts) * line_h
+        first = y + (row_h - block) / 2 + line_h - 3
+        for line_index, component in enumerate(label_parts):
+            suffix = " +" if line_index < len(label_parts) - 1 else ""
+            out.append(
+                f'<text x="{pad_l - 14}" y="{first + line_index * line_h:.1f}" '
+                f'text-anchor="end" class="cat">{escape(component + suffix)}</text>'
+            )
+        cy = y + row_h / 2
+        lo, hi = x(-stats["under_rate"]), x(stats["over_rate"])
+        out.append(
+            f'<line x1="{lo:.1f}" y1="{cy}" x2="{hi:.1f}" y2="{cy}" stroke="{colour}" '
+            f'stroke-width="9" opacity="0.32" stroke-linecap="butt"/>'
+        )
+        out.append(
+            f'<circle cx="{x(stats["net_rate"]):.1f}" cy="{cy}" r="5.5" fill="{colour}"/>'
+        )
+        out.append(
+            f'<text x="{lo - 6:.1f}" y="{cy + 4}" text-anchor="end" class="val">'
+            f'{stats["under_rate"] * 100:.0f}%</text>'
+            f'<text x="{hi + 6:.1f}" y="{cy + 4}" class="val">'
+            f'{stats["over_rate"] * 100:.0f}%</text>'
+        )
+
+    out.append(
+        f'<line x1="{zero:.1f}" y1="{pad_t - 6}" x2="{zero:.1f}" y2="{height - pad_b + 4}" '
+        f'stroke="{TEXT}" stroke-width="1.5"/>'
+        f'<text x="{zero:.1f}" y="{pad_t - 10}" text-anchor="middle" class="tick">'
+        f'matches the human annotation</text>'
+        f'<text x="{pad_l}" y="{height - pad_b + 29}" class="tick">'
+        f'&#8592; left in the clear</text>'
+        f'<text x="{pad_l + plot_w}" y="{height - pad_b + 29}" text-anchor="end" '
+        f'class="tick">redacted beyond the annotation &#8594;</text></svg>'
+    )
+
+    table_rows = []
+    for name, label_parts, colour, stats in rows:
+        leak = (
+            f'{stats["leak_rate"] * 100:.1f}%' if stats.get("leak_rate") is not None else "-"
+        )
+        table_rows.append(
+            f'<tr><td class="sys"><span class="swatch" style="background:{colour}"></span>'
+            f'{escape(" + ".join(label_parts))}</td>'
+            f'<td class="num">{stats["gold_spans"]}</td>'
+            f'<td class="num">{stats["predicted_spans"]}</td>'
+            f'<td class="num">{(stats["recall"] or 0) * 100:.1f}%</td>'
+            f'<td class="num">{(stats["precision"] or 0) * 100:.1f}%</td>'
+            f'<td class="num">{stats["f1"] * 100:.1f}%</td>'
+            f'<td class="num">{leak}</td></tr>'
+        )
+
+    return f"""
+<section>
+  <h2>PII redaction</h2>
+  <p class="prose">The human transcripts are the gold standard here: transcribers
+  wrap identifying material in curly braces, and 887 such spans exist across 142 of
+  the 269 sessions. Chirp-3 redacts natively into labelled placeholders; our
+  pipelines transcribe verbatim and redact nothing, so Gemma 4 was run over their
+  output in overlapping 400-word windows to give them a comparable capability. A
+  system's redaction is matched to a gold span by aligning the two token sequences
+  &mdash; "isaiah" against "[PERSON_NAME]" share no text, so they fall in the same
+  difflib replace block, which is exactly the correspondence needed.</p>
+  {"".join(out)}
+  <div class="tablewrap"><table>
+    <thead><tr><th>System</th><th>Gold spans</th><th>Redacted</th><th>Recall</th>
+      <th>Precision</th><th>F1</th><th>Leak rate</th></tr></thead>
+    <tbody>{"".join(table_rows)}</tbody>
+  </table></div>
+  <div class="caveats" style="margin-top:26px">
+    <div class="caveat">
+      <h3>Recall is trustworthy; precision is a lower bound</h3>
+      <p>A gold span is real PII, so failing to redact one is a real miss and recall
+      means what it says. Precision does not: only 142 of 269 transcripts carry any
+      annotation at all, and every genuine identifier a transcriber did not mark
+      counts against a system that caught it. Read the right-hand arm as "redacted
+      beyond what the humans marked", not as "wrong".</p>
+    </div>
+    <div class="caveat">
+      <h3>Over-redaction is not free</h3>
+      <p>Some of that right-hand arm is genuinely spurious: Chirp-3 turns "just some
+      rooms" into "[LOCATION], just some rooms" on one session checked by hand. Each
+      such substitution removes a real word from the transcript, which is why the
+      redacted systems also carry a small WER penalty against a reference that keeps
+      the original word.</p>
+    </div>
+    <div class="caveat">
+      <h3>Leak rate is the number without an alignment step</h3>
+      <p>Of the gold spans whose surface form the transcriber left intact, the leak
+      rate is how many appear verbatim in the system's output. It needs no matching
+      and no gold completeness assumption &mdash; the name is either still there or
+      it is not &mdash; so it is the figure to quote when the question is privacy
+      rather than detector quality.</p>
+    </div>
+  </div>
+</section>"""
 
 
 def condition_table(data: dict, caption: str) -> str:
@@ -837,6 +1005,7 @@ def build_page(
     partner_summary: dict | None = None,
     mono: dict | None = None,
     stereo: dict | None = None,
+    redaction_data: dict | None = None,
 ) -> str:
     aggregate = data.get("aggregate", {})
     per_visit = data.get("per_visit", {})
@@ -1086,6 +1255,7 @@ footer {{ margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--grid)
   </div>
 </section>
 {conditions_section(mono, stereo)}
+{redaction_panel(redaction_data)}
 {partner_section(partner_summary or {})}
 <section>
   <h2>Reading these numbers</h2>
@@ -1149,6 +1319,10 @@ def main() -> int:
         "--stereo", default=None,
         help="results.json restricted to the real-stereo subset",
     )
+    parser.add_argument(
+        "--redaction", default=None,
+        help="redaction.json from score_redaction.py; adds the PII section",
+    )
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
@@ -1158,12 +1332,13 @@ def main() -> int:
         partner_summary = merge_partner(data, json.loads(Path(args.partner).read_text()))
     mono = json.loads(Path(args.mono).read_text()) if args.mono else None
     stereo = json.loads(Path(args.stereo).read_text()) if args.stereo else None
+    redaction_data = json.loads(Path(args.redaction).read_text()) if args.redaction else None
     font_b64 = ""
     if args.font and Path(args.font).exists():
         font_b64 = base64.b64encode(Path(args.font).read_bytes()).decode()
 
     Path(args.output).write_text(
-        build_page(data, font_b64, partner_summary, mono, stereo)
+        build_page(data, font_b64, partner_summary, mono, stereo, redaction_data)
     )
     print(f"wrote {args.output}")
     return 0
