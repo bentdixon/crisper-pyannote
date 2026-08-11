@@ -228,11 +228,23 @@ def redact_words(model, tokenizer, words: list[dict]) -> tuple[list[dict], dict]
     }
 
 
+def destination_for(path: Path, suffix: str) -> Path:
+    """Source stem plus suffix, so each tree keeps its own naming."""
+    return path.with_name(path.stem + suffix)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--outputs", required=True, help="tree of transcript.json files")
     parser.add_argument("--pattern", default="transcript.json")
-    parser.add_argument("--suffix", default="transcript_redacted.json")
+    parser.add_argument(
+        "--suffix", default="_redacted.json",
+        help=(
+            "appended to the source stem, so transcript.json becomes "
+            "transcript_redacted.json and X_words.json becomes "
+            "X_words_redacted.json -- the names the scorer's adapters glob for"
+        ),
+    )
     parser.add_argument("--model", default=MODEL_ID)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--limit", type=int, default=None)
@@ -253,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("No %s under %s", args.pattern, root)
         return 1
     if not args.redo:
-        files = [f for f in files if not (f.parent / args.suffix).exists()]
+        files = [f for f in files if not destination_for(f, args.suffix).exists()]
     if args.shard:
         index_str, _, count_str = args.shard.partition("/")
         files = files[int(index_str) - 1 :: int(count_str)]
@@ -274,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
         redacted, report = redact_words(model, tokenizer, words)
         total_failures += report["window_failures"]
 
-        destination = path.parent / args.suffix
+        destination = destination_for(path, args.suffix)
         body = dict(payload) if isinstance(payload, dict) else {}
         body["words"] = redacted
         body["redaction"] = {"model": args.model, **report}
