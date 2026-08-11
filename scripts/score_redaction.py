@@ -26,6 +26,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import logging
 import sys
@@ -57,6 +58,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--output", default=None)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--leaks-csv", default=None, metavar="FILE",
+        help=(
+            "write one row per gold span that leaked, for inspection. WARNING: "
+            "this file contains the identifiers in the clear, by construction -- "
+            "it is the one output here that is not de-identified"
+        ),
+    )
+    parser.add_argument(
+        "--all-spans", action="store_true",
+        help="put every gold span in the CSV, not only the leaked ones",
+    )
     parser.add_argument(
         "--gold-only", action="store_true",
         help=(
@@ -90,6 +103,7 @@ def main(argv: list[str] | None = None) -> int:
         visits = visits[: args.limit]
 
     per_visit: dict[str, dict] = {}
+    leak_rows: list[dict] = []
     totals: dict[str, Counter] = {name: Counter() for name, _, _ in systems}
     categories: dict[str, Counter] = {name: Counter() for name, _, _ in systems}
     errors: dict[str, Counter] = {name: Counter() for name, _, _ in systems}
@@ -122,8 +136,28 @@ def main(argv: list[str] | None = None) -> int:
                 totals[name][key] += result[key]
             categories[name].update(result["categories"])
             per_visit.setdefault(relative.as_posix(), {})[name] = {
-                k: v for k, v in result.items() if k != "categories"
+                k: v for k, v in result.items() if k not in ("categories", "spans")
             }
+
+            if args.leaks_csv:
+                site, subject, session = relative.parts[:3]
+                for order, span in enumerate(result["spans"], start=1):
+                    if not (span["leaked"] or args.all_spans):
+                        continue
+                    leak_rows.append({
+                        "site": site,
+                        "subject": subject,
+                        "session": session,
+                        "system": name,
+                        "span": order,
+                        "identifier": span["surface"],
+                        "leaked": int(span["leaked"]),
+                        "redacted": int(span["redacted"]),
+                        "leak_testable": int(span["testable"]),
+                        "labels": " ".join(span["labels"]),
+                        "human_context": span["human_context"],
+                        "system_context": span["system_context"],
+                    })
         if index % 25 == 0 or index == len(visits):
             logger.info("  %d/%d visits", index, len(visits))
 
@@ -185,6 +219,27 @@ def main(argv: list[str] | None = None) -> int:
             f"{s['true_positives']:5d} {s['false_positives']:5d} {s['false_negatives']:5d}  "
             f"{(s['precision'] or 0) * 100:5.1f}% {(s['recall'] or 0) * 100:5.1f}% "
             f"{s['f1'] * 100:5.1f}%  {s['under_rate'] * 100:5.1f}% {s['over_rate'] * 100:5.1f}%  {leak}"
+        )
+
+    if args.leaks_csv:
+        # Sorted so a reviewer reads one participant's sessions together and the
+        # same span appears under each system in turn.
+        leak_rows.sort(key=lambda r: (r["subject"], r["session"], r["span"], r["system"]))
+        fields = [
+            "site", "subject", "session", "system", "span", "identifier",
+            "leaked", "redacted", "leak_testable", "labels",
+            "human_context", "system_context",
+        ]
+        with open(args.leaks_csv, "w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(leak_rows)
+        subjects = len({r["subject"] for r in leak_rows})
+        logger.warning(
+            "wrote %s: %d row(s) across %d participant(s). This file contains "
+            "identifiers in the clear -- keep it beside the audio, not with the "
+            "de-identified outputs",
+            args.leaks_csv, len(leak_rows), subjects,
         )
 
     if args.output:

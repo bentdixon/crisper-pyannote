@@ -178,8 +178,13 @@ def project(blocks, start: int, end: int, pad: int = 2) -> tuple[int, int]:
     return max(low - pad, 0), high + pad
 
 
+def context(tokens: list[str], start: int, end: int, width: int = 7) -> str:
+    """Surrounding words, for a human reading a leak report."""
+    return " ".join(tokens[max(start - width, 0):min(end + width, len(tokens))])
+
+
 def score_visit(human: Path, words: list[dict]) -> dict:
-    """Redaction metrics for one visit."""
+    """Redaction metrics for one visit, with per-span detail for inspection."""
     ref_tokens, gold = human_tokens(human)
     hyp_tokens, predicted = system_tokens(words)
     blocks = index_map(ref_tokens, hyp_tokens)
@@ -187,6 +192,9 @@ def score_visit(human: Path, words: list[dict]) -> dict:
     # A gold span is found if any placeholder overlaps its projected region.
     matched_predictions: set[int] = set()
     true_positives = 0
+    details: list[dict] = []
+    joined = " ".join(normalize_token(t) for t in hyp_tokens)
+
     for span in gold:
         low, high = project(blocks, span["start"], span["end"])
         hit = [
@@ -197,19 +205,28 @@ def score_visit(human: Path, words: list[dict]) -> dict:
             true_positives += 1
             matched_predictions.update(hit)
 
+        # A span the transcriber already scrubbed to {redacted} has no surface
+        # form left, so it can be matched positionally but never leak-tested.
+        testable = not span["scrubbed"] and bool(span["surface"].strip())
+        needle = " ".join(normalize_token(t) for t in span["surface"].split())
+        leaked = bool(
+            testable and needle
+            and re.search(rf"(?:^| ){re.escape(needle)}(?: |$)", joined)
+        )
+        details.append({
+            "surface": span["surface"],
+            "testable": testable,
+            "leaked": leaked,
+            "redacted": bool(hit),
+            "labels": sorted({predicted[k]["label"] for k in hit}),
+            "human_context": context(ref_tokens, span["start"], span["end"]),
+            "system_context": context(hyp_tokens, low, high) if hyp_tokens else "",
+        })
+
     false_negatives = len(gold) - true_positives
     false_positives = len(predicted) - len(matched_predictions)
-
-    # Leak test: gold surface forms that survive verbatim in the output. Only
-    # spans the transcriber left intact can be tested, so the denominator is
-    # smaller than the span count and is reported alongside.
-    joined = " ".join(normalize_token(t) for t in hyp_tokens)
-    testable = [s for s in gold if not s["scrubbed"] and s["surface"].strip()]
-    leaked = 0
-    for span in testable:
-        needle = " ".join(normalize_token(t) for t in span["surface"].split())
-        if needle and re.search(rf"(?:^| ){re.escape(needle)}(?: |$)", joined):
-            leaked += 1
+    testable_spans = [d for d in details if d["testable"]]
+    leaked = sum(1 for d in testable_spans if d["leaked"])
 
     categories: dict[str, int] = {}
     for span in predicted:
@@ -230,7 +247,8 @@ def score_visit(human: Path, words: list[dict]) -> dict:
         "precision": precision,
         "recall": recall,
         "f1": f1,
-        "leak_testable": len(testable),
+        "leak_testable": len(testable_spans),
         "leaked": leaked,
         "categories": categories,
+        "spans": details,
     }
