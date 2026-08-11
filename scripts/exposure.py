@@ -117,6 +117,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="per-transcript rows. Contains identifiers in the clear.",
     )
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--max-minutes", type=float, default=None,
+        help=(
+            "cap the scored window, on top of the per-transcript coverage "
+            "window; a sensitivity check that the comparison does not rest on "
+            "the tail of the longer transcripts"
+        ),
+    )
     return parser
 
 
@@ -159,7 +167,9 @@ def main(argv: list[str] | None = None) -> int:
             turns = load_timestamped_text(human, 0.0)
         except Exception:
             continue
-        turns, window_start, window_end = covered_turns(turns)
+        turns, window_start, window_end = covered_turns(
+            turns, args.max_minutes * 60 if args.max_minutes else None,
+        )
         if not turns:
             continue
 

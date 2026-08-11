@@ -20,7 +20,8 @@ removes the guesswork.
 from __future__ import annotations
 
 
-def covered_turns(turns: list[dict]) -> tuple[list[dict], float | None, float | None]:
+def covered_turns(turns: list[dict], max_seconds: float | None = None,
+                  ) -> tuple[list[dict], float | None, float | None]:
     """Turns whose time span is real, plus the window they cover.
 
     Returns ([], None, None) when there is nothing scoreable, which the caller
@@ -33,10 +34,20 @@ def covered_turns(turns: list[dict]) -> tuple[list[dict], float | None, float | 
     if end <= start:
         return [], None, None
 
+    if max_seconds is not None and end - start > max_seconds:
+        # A hard cap on top of the per-transcript window, for checking that the
+        # comparison does not rest on the tail of the longer transcripts. Turns
+        # beyond the cap are dropped whole rather than split, so the reference
+        # stays a sequence of complete turns.
+        end = start + max_seconds
+        turns = [t for t in turns if float(t["start"]) < end]
+        if len(turns) < 2:
+            return [], None, None
+
     kept = [dict(turn) for turn in turns[:-1]]
     # The last kept turn ends where the dropped one begins; it already should,
     # but stating it keeps the window and the reference exactly consistent.
-    kept[-1]["end"] = end
+    kept[-1]["end"] = min(float(turns[-1]["start"]), end)
     return kept, start, end
 
 
