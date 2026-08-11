@@ -189,16 +189,28 @@ def main(argv: list[str] | None = None) -> int:
         if not placed:
             continue
 
-        locations = merge_ranges(
-            [(g["start"], g["end"]) for g in gold]
-            + [r for spans in placed.values() for r in spans if r != (0, 0)]
-        )
-        if not locations:
-            # Nothing known to protect on this transcript; not evidence of
-            # safety, so it is excluded rather than scored as perfect.
-            continue
+        gold_ranges = [(g["start"], g["end"]) for g in gold]
 
         for name in placed:
+            # Leave-one-out: a system is judged against the human's spans plus
+            # what the OTHER systems found, never its own detections. Including
+            # them lets a system propose locations it satisfies by construction,
+            # which hands the win to whichever redactor is most aggressive --
+            # with its own detections in, Chirp-3 (1996 spans) scored 34%
+            # exposed against Gemma's 52% (1449 spans), reversing the ranking
+            # every other measure gives.
+            locations = merge_ranges(
+                gold_ranges
+                + [
+                    r for other, spans in placed.items() if other != name
+                    for r in spans if r != (0, 0)
+                ]
+            )
+            if not locations:
+                # Nothing known to protect here; not evidence of safety, so the
+                # transcript is skipped rather than scored as perfect.
+                continue
+
             exposed = []
             for start, end in locations:
                 covered = any(
