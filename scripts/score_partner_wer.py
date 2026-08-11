@@ -50,8 +50,10 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "finetune"))
 
 from partner_compare import analyze, replace_fillers, tokenize  # noqa: E402
+from prepare_data import TIMESTAMPED_LINE  # noqa: E402
 
 from evaluate_systems import ADAPTERS  # noqa: E402
 
@@ -59,14 +61,26 @@ logger = logging.getLogger("score_partner_wer")
 
 TIERS = ("raw", "normalized", "filler_normalized")
 
-# "S1 00:00:01.451 " at the head of a turn; continuation lines carry no prefix.
-TURN_PREFIX = re.compile(r"^\s*S\d+\s+\d{1,2}:\d{2}:\d{2}(?:\.\d+)?\s*")
-
 
 def reference_prose(path: Path) -> str:
-    """The human transcript as prose: speaker tags and timestamps removed."""
-    lines = [TURN_PREFIX.sub("", line).strip() for line in path.read_text().splitlines()]
-    return re.sub(r"\s+", " ", " ".join(line for line in lines if line)).strip()
+    """The human transcript as prose: speaker tags and timestamps removed.
+
+    The prefix is matched with prepare_data's TIMESTAMPED_LINE, whose speaker
+    field is a bare (\\S+). This corpus uses three spellings -- "INTERVIEWER:"
+    and "PARTICIPANT:" on 56k lines, "S1"/"S1:" on 13k -- and a regex written
+    for the S-form alone leaves the tag and the timestamp digits in the
+    reference on most files, inflating every system's WER equally and
+    invisibly. Turn text is kept verbatim (not normalize_text'd) so the
+    transcriber's brackets reach their tokenizer, which deletes them.
+    """
+    parts: list[str] = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        match = TIMESTAMPED_LINE.match(line)
+        parts.append(match.group(3) if match else line)
+    return re.sub(r"\s+", " ", " ".join(parts)).strip()
 
 
 def partner_wer(reference_text: str, hypothesis_text: str) -> dict[str, float]:
