@@ -1,7 +1,7 @@
 System,Visits,Gold spans,Spans redacted,True positives,False positives,False negatives,Recall (sensitivity),Precision,F1,Under-redaction,Over-redaction,Leak rate
-Chirp-3 ASR + Chirp-3 diarization + Chirp-3 redaction,269,887,1996,566,1465,321,63.81,27.87,38.79,36.19,165.16,16.77
-Chirp-3 ASR + CrisperWhisper 2.0 verbatimize + Chirp-3 diarization,269,887,264,75,199,812,8.46,27.37,12.92,91.54,22.44,64.19
-CrisperWhisper 2.0 ASR + pyannote community-1,269,887,0,0,0,887,0.00,,0.00,100.00,0.00,75.16
-CrisperWhisper 2.0 ASR + pyannote community-1 + Gemma 4 31B redaction,269,887,1449,652,826,235,73.51,44.11,55.14,26.49,93.12,10.32
-CrisperWhisper 2.0 ASR + pyannote 3.1,269,887,0,0,0,887,0.00,,0.00,100.00,0.00,74.52
-CrisperWhisper 2.0 ASR + pyannote 3.1 + Gemma 4 31B redaction,269,887,1544,655,919,232,73.84,41.61,53.23,26.16,103.61,12.90
+Chirp-3 ASR + Chirp-3 diarization + Chirp-3 redaction,269,876,1996,566,1465,310,64.61,27.87,38.94,35.39,167.24,16.99
+Chirp-3 ASR + CrisperWhisper 2.0 verbatimize + Chirp-3 diarization,269,876,264,75,199,801,8.56,27.37,13.04,91.44,22.72,64.38
+CrisperWhisper 2.0 ASR + pyannote community-1,269,876,0,0,0,876,0.00,,0.00,100.00,0.00,75.16
+CrisperWhisper 2.0 ASR + pyannote community-1 + Gemma 4 31B redaction,269,876,1449,652,826,224,74.43,44.11,55.40,25.57,94.29,10.46
+CrisperWhisper 2.0 ASR + pyannote 3.1,269,876,0,0,0,876,0.00,,0.00,100.00,0.00,74.51
+CrisperWhisper 2.0 ASR + pyannote 3.1 + Gemma 4 31B redaction,269,876,1544,655,919,221,74.77,41.61,53.47,25.23,104.91,13.07

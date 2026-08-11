@@ -2,47 +2,47 @@
   "aggregate": {
     "Chirp-3 ASR + Chirp-3 diarization + Chirp-3 redaction": {
       "transcripts": 242,
-      "pii_locations": 1796,
-      "exposed": 916,
-      "exposed_rate": 0.5100222717149221,
-      "clean_transcripts": 25,
-      "clean_transcript_rate": 0.10330578512396695,
-      "gold_locations": 887,
-      "gold_exposed": 324,
-      "gold_exposed_rate": 0.3652762119503946
+      "pii_locations": 1785,
+      "exposed": 905,
+      "exposed_rate": 0.5070028011204482,
+      "clean_transcripts": 26,
+      "clean_transcript_rate": 0.10743801652892562,
+      "gold_locations": 876,
+      "gold_exposed": 313,
+      "gold_exposed_rate": 0.3573059360730594
     },
     "Chirp-3 ASR + CrisperWhisper 2.0 verbatimize + Chirp-3 diarization": {
       "transcripts": 258,
-      "pii_locations": 2681,
-      "exposed": 2522,
-      "exposed_rate": 0.9406937709809773,
+      "pii_locations": 2670,
+      "exposed": 2511,
+      "exposed_rate": 0.9404494382022472,
       "clean_transcripts": 2,
       "clean_transcript_rate": 0.007751937984496124,
-      "gold_locations": 887,
-      "gold_exposed": 813,
-      "gold_exposed_rate": 0.9165727170236753
+      "gold_locations": 876,
+      "gold_exposed": 802,
+      "gold_exposed_rate": 0.9155251141552512
     },
     "CrisperWhisper 2.0 ASR + pyannote community-1 + Gemma 4 31B redaction": {
       "transcripts": 256,
-      "pii_locations": 2612,
-      "exposed": 1402,
-      "exposed_rate": 0.5367534456355283,
+      "pii_locations": 2601,
+      "exposed": 1391,
+      "exposed_rate": 0.5347943098808151,
       "clean_transcripts": 15,
       "clean_transcript_rate": 0.05859375,
-      "gold_locations": 887,
-      "gold_exposed": 237,
-      "gold_exposed_rate": 0.26719278466741825
+      "gold_locations": 876,
+      "gold_exposed": 226,
+      "gold_exposed_rate": 0.2579908675799087
     },
     "CrisperWhisper 2.0 ASR + pyannote 3.1 + Gemma 4 31B redaction": {
       "transcripts": 254,
-      "pii_locations": 2529,
-      "exposed": 1309,
-      "exposed_rate": 0.5175958877026493,
+      "pii_locations": 2518,
+      "exposed": 1298,
+      "exposed_rate": 0.5154884829229547,
       "clean_transcripts": 21,
       "clean_transcript_rate": 0.08267716535433071,
-      "gold_locations": 887,
-      "gold_exposed": 233,
-      "gold_exposed_rate": 0.26268320180383314
+      "gold_locations": 876,
+      "gold_exposed": 222,
+      "gold_exposed_rate": 0.2534246575342466
     }
   },
   "per_visit": {
@@ -4141,32 +4141,32 @@
     },
     "PronetGA/GA33579/day0036_session002": {
       "Chirp-3 ASR + Chirp-3 diarization + Chirp-3 redaction": {
+        "locations": 1,
+        "exposed": 1,
+        "exposed_rate": 1.0,
+        "gold_locations": 0,
+        "gold_exposed": 0
+      },
+      "Chirp-3 ASR + CrisperWhisper 2.0 verbatimize + Chirp-3 diarization": {
         "locations": 2,
         "exposed": 2,
         "exposed_rate": 1.0,
-        "gold_locations": 1,
-        "gold_exposed": 1
-      },
-      "Chirp-3 ASR + CrisperWhisper 2.0 verbatimize + Chirp-3 diarization": {
-        "locations": 3,
-        "exposed": 3,
-        "exposed_rate": 1.0,
-        "gold_locations": 1,
-        "gold_exposed": 1
+        "gold_locations": 0,
+        "gold_exposed": 0
       },
       "CrisperWhisper 2.0 ASR + pyannote community-1 + Gemma 4 31B redaction": {
-        "locations": 3,
-        "exposed": 2,
-        "exposed_rate": 0.6666666666666666,
-        "gold_locations": 1,
-        "gold_exposed": 1
+        "locations": 2,
+        "exposed": 1,
+        "exposed_rate": 0.5,
+        "gold_locations": 0,
+        "gold_exposed": 0
       },
       "CrisperWhisper 2.0 ASR + pyannote 3.1 + Gemma 4 31B redaction": {
-        "locations": 3,
-        "exposed": 2,
-        "exposed_rate": 0.6666666666666666,
-        "gold_locations": 1,
-        "gold_exposed": 1
+        "locations": 2,
+        "exposed": 1,
+        "exposed_rate": 0.5,
+        "gold_locations": 0,
+        "gold_exposed": 0
       }
     },
     "PronetGA/GA34151/day0027_session002": {
@@ -5269,32 +5269,32 @@
     },
     "PronetHA/HA20220/day0117_session003": {
       "Chirp-3 ASR + Chirp-3 diarization + Chirp-3 redaction": {
-        "locations": 12,
-        "exposed": 10,
-        "exposed_rate": 0.8333333333333334,
-        "gold_locations": 9,
-        "gold_exposed": 7
+        "locations": 6,
+        "exposed": 4,
+        "exposed_rate": 0.6666666666666666,
+        "gold_locations": 3,
+        "gold_exposed": 1
       },
       "Chirp-3 ASR + CrisperWhisper 2.0 verbatimize + Chirp-3 diarization": {
-        "locations": 13,
-        "exposed": 13,
+        "locations": 7,
+        "exposed": 7,
         "exposed_rate": 1.0,
-        "gold_locations": 9,
-        "gold_exposed": 9
+        "gold_locations": 3,
+        "gold_exposed": 3
       },
       "CrisperWhisper 2.0 ASR + pyannote community-1 + Gemma 4 31B redaction": {
-        "locations": 13,
-        "exposed": 9,
-        "exposed_rate": 0.6923076923076923,
-        "gold_locations": 9,
-        "gold_exposed": 6
+        "locations": 7,
+        "exposed": 3,
+        "exposed_rate": 0.42857142857142855,
+        "gold_locations": 3,
+        "gold_exposed": 0
       },
       "CrisperWhisper 2.0 ASR + pyannote 3.1 + Gemma 4 31B redaction": {
-        "locations": 11,
-        "exposed": 7,
-        "exposed_rate": 0.6363636363636364,
-        "gold_locations": 9,
-        "gold_exposed": 6
+        "locations": 5,
+        "exposed": 1,
+        "exposed_rate": 0.2,
+        "gold_locations": 3,
+        "gold_exposed": 0
       }
     },
     "PronetHA/HA25103/day0166_session003": {
@@ -6741,32 +6741,32 @@
     },
     "PronetSF/SF02156/day0390_session002": {
       "Chirp-3 ASR + Chirp-3 diarization + Chirp-3 redaction": {
-        "locations": 6,
-        "exposed": 1,
-        "exposed_rate": 0.16666666666666666,
-        "gold_locations": 8,
-        "gold_exposed": 2
+        "locations": 5,
+        "exposed": 0,
+        "exposed_rate": 0.0,
+        "gold_locations": 7,
+        "gold_exposed": 1
       },
       "Chirp-3 ASR + CrisperWhisper 2.0 verbatimize + Chirp-3 diarization": {
-        "locations": 9,
-        "exposed": 8,
-        "exposed_rate": 0.8888888888888888,
-        "gold_locations": 8,
-        "gold_exposed": 8
+        "locations": 8,
+        "exposed": 7,
+        "exposed_rate": 0.875,
+        "gold_locations": 7,
+        "gold_exposed": 7
       },
       "CrisperWhisper 2.0 ASR + pyannote community-1 + Gemma 4 31B redaction": {
-        "locations": 10,
-        "exposed": 6,
-        "exposed_rate": 0.6,
-        "gold_locations": 8,
-        "gold_exposed": 3
+        "locations": 9,
+        "exposed": 5,
+        "exposed_rate": 0.5555555555555556,
+        "gold_locations": 7,
+        "gold_exposed": 2
       },
       "CrisperWhisper 2.0 ASR + pyannote 3.1 + Gemma 4 31B redaction": {
-        "locations": 10,
-        "exposed": 5,
-        "exposed_rate": 0.5,
-        "gold_locations": 8,
-        "gold_exposed": 1
+        "locations": 9,
+        "exposed": 4,
+        "exposed_rate": 0.4444444444444444,
+        "gold_locations": 7,
+        "gold_exposed": 0
       }
     },
     "PronetSF/SF05231/day0107_session001": {
@@ -6861,32 +6861,32 @@
     },
     "PronetSF/SF06718/day0025_session001": {
       "Chirp-3 ASR + Chirp-3 diarization + Chirp-3 redaction": {
-        "locations": 2,
-        "exposed": 2,
+        "locations": 1,
+        "exposed": 1,
         "exposed_rate": 1.0,
-        "gold_locations": 2,
-        "gold_exposed": 2
+        "gold_locations": 1,
+        "gold_exposed": 1
       },
       "Chirp-3 ASR + CrisperWhisper 2.0 verbatimize + Chirp-3 diarization": {
-        "locations": 5,
-        "exposed": 5,
+        "locations": 4,
+        "exposed": 4,
         "exposed_rate": 1.0,
-        "gold_locations": 2,
-        "gold_exposed": 2
+        "gold_locations": 1,
+        "gold_exposed": 1
       },
       "CrisperWhisper 2.0 ASR + pyannote community-1 + Gemma 4 31B redaction": {
-        "locations": 5,
-        "exposed": 5,
+        "locations": 4,
+        "exposed": 4,
         "exposed_rate": 1.0,
-        "gold_locations": 2,
-        "gold_exposed": 2
+        "gold_locations": 1,
+        "gold_exposed": 1
       },
       "CrisperWhisper 2.0 ASR + pyannote 3.1 + Gemma 4 31B redaction": {
-        "locations": 5,
-        "exposed": 5,
+        "locations": 4,
+        "exposed": 4,
         "exposed_rate": 1.0,
-        "gold_locations": 2,
-        "gold_exposed": 2
+        "gold_locations": 1,
+        "gold_exposed": 1
       }
     },
     "PronetSF/SF06718/day0415_session002": {
@@ -7544,32 +7544,32 @@
     },
     "PronetYA/YA03473/day0001_session001": {
       "Chirp-3 ASR + Chirp-3 diarization + Chirp-3 redaction": {
-        "locations": 13,
-        "exposed": 2,
-        "exposed_rate": 0.15384615384615385,
-        "gold_locations": 13,
-        "gold_exposed": 2
+        "locations": 12,
+        "exposed": 1,
+        "exposed_rate": 0.08333333333333333,
+        "gold_locations": 12,
+        "gold_exposed": 1
       },
       "Chirp-3 ASR + CrisperWhisper 2.0 verbatimize + Chirp-3 diarization": {
-        "locations": 15,
-        "exposed": 15,
+        "locations": 14,
+        "exposed": 14,
         "exposed_rate": 1.0,
-        "gold_locations": 13,
-        "gold_exposed": 13
+        "gold_locations": 12,
+        "gold_exposed": 12
       },
       "CrisperWhisper 2.0 ASR + pyannote community-1 + Gemma 4 31B redaction": {
-        "locations": 15,
-        "exposed": 4,
-        "exposed_rate": 0.26666666666666666,
-        "gold_locations": 13,
-        "gold_exposed": 2
+        "locations": 14,
+        "exposed": 3,
+        "exposed_rate": 0.21428571428571427,
+        "gold_locations": 12,
+        "gold_exposed": 1
       },
       "CrisperWhisper 2.0 ASR + pyannote 3.1 + Gemma 4 31B redaction": {
-        "locations": 15,
-        "exposed": 4,
-        "exposed_rate": 0.26666666666666666,
-        "gold_locations": 13,
-        "gold_exposed": 2
+        "locations": 14,
+        "exposed": 3,
+        "exposed_rate": 0.21428571428571427,
+        "gold_locations": 12,
+        "gold_exposed": 1
       }
     },
     "PronetYA/YA03473/day0057_session002": {
@@ -7604,32 +7604,32 @@
     },
     "PronetYA/YA03473/day0209_session004": {
       "Chirp-3 ASR + Chirp-3 diarization + Chirp-3 redaction": {
-        "locations": 7,
-        "exposed": 5,
-        "exposed_rate": 0.7142857142857143,
-        "gold_locations": 6,
-        "gold_exposed": 4
+        "locations": 6,
+        "exposed": 4,
+        "exposed_rate": 0.6666666666666666,
+        "gold_locations": 5,
+        "gold_exposed": 3
       },
       "Chirp-3 ASR + CrisperWhisper 2.0 verbatimize + Chirp-3 diarization": {
-        "locations": 7,
-        "exposed": 7,
+        "locations": 6,
+        "exposed": 6,
         "exposed_rate": 1.0,
-        "gold_locations": 6,
-        "gold_exposed": 6
+        "gold_locations": 5,
+        "gold_exposed": 5
       },
       "CrisperWhisper 2.0 ASR + pyannote community-1 + Gemma 4 31B redaction": {
-        "locations": 7,
-        "exposed": 2,
-        "exposed_rate": 0.2857142857142857,
-        "gold_locations": 6,
-        "gold_exposed": 1
+        "locations": 6,
+        "exposed": 1,
+        "exposed_rate": 0.16666666666666666,
+        "gold_locations": 5,
+        "gold_exposed": 0
       },
       "CrisperWhisper 2.0 ASR + pyannote 3.1 + Gemma 4 31B redaction": {
-        "locations": 6,
-        "exposed": 2,
-        "exposed_rate": 0.3333333333333333,
-        "gold_locations": 6,
-        "gold_exposed": 2
+        "locations": 5,
+        "exposed": 1,
+        "exposed_rate": 0.2,
+        "gold_locations": 5,
+        "gold_exposed": 1
       }
     }
   }
