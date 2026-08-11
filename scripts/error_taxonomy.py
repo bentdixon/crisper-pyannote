@@ -47,6 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "finetune"))
 
 import jiwer  # noqa: E402
 import systems as registry  # noqa: E402
+from coverage import clip_words, covered_turns  # noqa: E402
 from prepare_data import load_timestamped_text  # noqa: E402
 
 from evaluate_systems import ADAPTERS, normalize  # noqa: E402
@@ -205,6 +206,9 @@ def main(argv: list[str] | None = None) -> int:
             turns = load_timestamped_text(human, 0.0)
         except Exception:
             continue
+        turns, window_start, window_end = covered_turns(turns)
+        if not turns:
+            continue
         reference_text = normalize(" ".join(t["text"] for t in turns))
         if not reference_text:
             continue
@@ -214,6 +218,9 @@ def main(argv: list[str] | None = None) -> int:
                 words = adapter(visit, root, relative)
             except Exception:
                 words = None
+            if not words:
+                continue
+            words = clip_words(words, window_start, window_end)
             if not words:
                 continue
             hypothesis_text = normalize(" ".join(str(w.get("word", "")) for w in words))

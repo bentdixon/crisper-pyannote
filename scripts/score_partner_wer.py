@@ -53,8 +53,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "finetune"))
 
 import systems as registry  # noqa: E402
+from coverage import clip_words, covered_turns  # noqa: E402
 from partner_compare import analyze, replace_fillers, tokenize  # noqa: E402
-from prepare_data import TIMESTAMPED_LINE  # noqa: E402
+from prepare_data import TIMESTAMPED_LINE, load_timestamped_text  # noqa: E402
 
 from evaluate_systems import ADAPTERS  # noqa: E402
 
@@ -141,7 +142,18 @@ def main(argv: list[str] | None = None) -> int:
     for index, visit in enumerate(visits, start=1):
         relative = visit.relative_to(cohort)
         human = sorted((visit / "human").glob("*.txt"))[0]
-        reference_text = reference_prose(human)
+        # Restricted to the covered span, like every other scorer here: the
+        # human transcripts stop early on a third of the cohort, and scoring a
+        # whole session against a partial reference measures the gap rather
+        # than the transcription.
+        try:
+            turns = load_timestamped_text(human, 0.0)
+        except Exception:
+            continue
+        turns, window_start, window_end = covered_turns(turns)
+        if not turns:
+            continue
+        reference_text = re.sub(r"\s+", " ", " ".join(t["text"] for t in turns)).strip()
         if not reference_text:
             continue
 
@@ -154,6 +166,9 @@ def main(argv: list[str] | None = None) -> int:
             if not words:
                 if words is None:
                     missing[name] += 1
+                continue
+            words = clip_words(words, window_start, window_end)
+            if not words:
                 continue
             hypothesis_text = " ".join(str(w.get("word", "")).strip() for w in words).strip()
             if not hypothesis_text:

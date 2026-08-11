@@ -47,6 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "finetune"))
 import jiwer  # noqa: E402
 import numpy as np  # noqa: E402
 import systems as registry  # noqa: E402
+from coverage import clip_words, coverage_fraction, covered_turns  # noqa: E402
 from prepare_data import load_timestamped_text, normalize_text  # noqa: E402
 from pyannote.core import Annotation, Segment  # noqa: E402
 from pyannote.metrics.diarization import DiarizationErrorRate  # noqa: E402
@@ -508,11 +509,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.limit:
         visits = visits[: args.limit]
     logger.info("Scoring %d system(s) over %d visit(s)", len(systems), len(visits))
+    logger.info("Scoring only the span each human transcript covers")
 
     per_visit: dict[str, dict] = {}
     scores: dict[str, list[dict]] = {name: [] for name, _, _ in systems}
     adapter_errors: dict[str, Counter] = {name: Counter() for name, _, _ in systems}
     missing: Counter = Counter()
+    coverage_seen: list[float] = []
 
     for index, visit in enumerate(visits, start=1):
         relative = visit.relative_to(cohort)
@@ -532,6 +535,14 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:
             logger.warning("  unparseable human transcript: %s", relative)
             continue
+        # Both sides are restricted to the span the transcript covers; see
+        # coverage.py for why the window ends at the last turn's start.
+        fraction = coverage_fraction(turns, duration)
+        turns, window_start, window_end = covered_turns(turns)
+        if not turns:
+            logger.warning("  no scoreable window: %s", relative)
+            continue
+        coverage_seen.append(fraction if fraction is not None else 1.0)
 
         for name, adapter, root in systems:
             # A bare "except -> no data" here once hid a TypeError in an
@@ -546,10 +557,14 @@ def main(argv: list[str] | None = None) -> int:
                 if words is None:
                     missing[name] += 1
                 continue
+            words = clip_words(words, window_start, window_end)
+            if not words:
+                continue
             result = score_visit(turns, words, legacy_der=args.legacy_der)
             if result is None:
                 continue
             result["visit"] = relative.as_posix()
+            result["coverage"] = round(fraction, 4) if fraction is not None else None
             scores[name].append(result)
             per_visit.setdefault(relative.as_posix(), {})[name] = {
                 k: (round(v, 4) if isinstance(v, float) else v)
@@ -619,6 +634,14 @@ def main(argv: list[str] | None = None) -> int:
     # Excluded reference streams are reported, never silently dropped: the count
     # is a property of the human transcripts, so it must be identical across
     # systems, and a system-specific number would mean the filter is misapplied.
+    if coverage_seen:
+        coverage_seen.sort()
+        logger.info(
+            "human transcript coverage: median %.0f%%, %d of %d visit(s) under 80%%",
+            coverage_seen[len(coverage_seen) // 2] * 100,
+            sum(1 for c in coverage_seen if c < 0.8), len(coverage_seen),
+        )
+
     phantoms = {n: s.get("phantom_streams", 0) for n, s in aggregate.items()}
     if any(phantoms.values()):
         logger.info(

@@ -37,7 +37,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import redaction  # noqa: E402
 import systems as registry  # noqa: E402
+from coverage import clip_words, covered_turns  # noqa: E402
 from evaluate_systems import ADAPTERS, make_file_adapter, make_run_adapter  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "finetune"))
+from prepare_data import load_timestamped_text  # noqa: E402
 
 logger = logging.getLogger("score_redaction")
 
@@ -114,6 +118,16 @@ def main(argv: list[str] | None = None) -> int:
     for index, visit in enumerate(visits, start=1):
         relative = visit.relative_to(cohort)
         human = sorted((visit / "human").glob("*.txt"))[0]
+        # The gold spans all sit inside the covered span by construction, but
+        # the hypothesis must be clipped to it or every placeholder the system
+        # emitted after the transcript stopped counts as a false positive.
+        try:
+            turns = load_timestamped_text(human, 0.0)
+        except Exception:
+            continue
+        turns, window_start, window_end = covered_turns(turns)
+        if not turns:
+            continue
         gold_tokens, gold_spans = redaction.human_tokens(human)
         if gold_spans:
             gold_visits += 1
@@ -126,6 +140,9 @@ def main(argv: list[str] | None = None) -> int:
             except Exception as error:
                 errors[name][f"{type(error).__name__}: {error}"] += 1
                 continue
+            if not words:
+                continue
+            words = clip_words(words, window_start, window_end)
             if not words:
                 continue
             result = redaction.score_visit(human, words)
