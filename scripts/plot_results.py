@@ -102,19 +102,20 @@ CAPTIONS = {
         "Substitutions plus deletions plus insertions, divided by the number of "
         "reference words, after filled pauses are removed from both sides. WER is "
         "not capped at 100%: a system that inserts more words than the reference "
-        "contains scores above it. On this corpus the machine transcribes verbatim "
-        "while the human transcripts are semi-verbatim, so every system emits about "
-        "a third more words than the reference and insertions dominate the total for "
-        "all of them. Read the ordering between systems, not the absolute level, and "
-        "note that the most faithful transcriber is penalised most."
+        "contains scores above it. Scoring is restricted to the span each human "
+        "transcript actually covers -- they stop early on a third of this cohort, and "
+        "including the untranscribed remainder charged every system for minutes the "
+        "reference never described, inflating WER from roughly 12% to roughly 42%. "
+        "Within the covered span the machine now emits slightly fewer words than the "
+        "reference, and deletions rather than insertions carry most of the total."
     ),
     "WER_no_ins": (
         "Substitutions plus deletions only: the share of reference words the machine "
-        "got wrong or missed outright. Dropping insertions removes the verbatim "
-        "versus semi-verbatim mismatch, which inflates every system's WER by roughly "
-        "the same amount and has nothing to do with transcription accuracy. This is "
-        "the fairer measure of how well each system heard the words that both the "
-        "machine and the human agreed were said."
+        "got wrong or missed outright. Dropping insertions removes what remains of the "
+        "verbatim versus semi-verbatim mismatch -- the machine keeps disfluencies and "
+        "repetitions the transcriber deletes silently -- which is a convention "
+        "difference rather than a transcription failure. This is the fairer measure of "
+        "how well each system heard the words both sources agree were said."
     ),
     "sWER": (
         "Speaker-attributed word error rate. Reference and predicted speaker streams "
@@ -467,24 +468,23 @@ def taxonomy_panel(data: dict | None) -> str:
     return f"""
 <section>
   <h2>What the word error rate is made of</h2>
-  <p class="prose">A WER in the forties invites the conclusion that these
-  transcripts are unusable. They are not, and this chart is why. Filled pauses are
-  already removed from <em>both</em> sides before scoring, so um and uh contribute
-  nothing to any of these bars. Splitting the remaining edits by type separates
-  three different things that WER adds together: words the machine heard wrong,
-  words it missed, and words it produced that the human transcript simply does not
-  record. The segments sum to the reported WER exactly.</p>
+  <p class="prose">Filled pauses are removed from <em>both</em> sides before scoring,
+  so um and uh contribute nothing to any of these bars, and scoring is restricted to
+  the span each human transcript covers. Splitting the remaining edits by type
+  separates three things WER adds together: words the machine heard wrong, words it
+  missed, and words it produced that the transcript does not record. The segments sum
+  to the reported WER exactly. <b>Deletions now dominate</b> &mdash; the machine
+  missing reference words, not inventing them.</p>
   {svg}
   <div class="legend parts">{swatches}</div>
   <p class="prose" style="margin-top:22px">For our pipeline that is
   <b>{heard_wrong:.1f}%</b> of reference words misheard, <b>{missed:.1f}%</b> missed,
-  and <b>{unrecorded:.1f}%</b> spoken but unrecorded by the transcriber. The last of
-  those is not a transcription failure and it dominates the headline. Its largest
-  component is not disfluency: <b>97% of inserted words fall in unbroken runs of
-  twenty or more</b>, with single runs of over four thousand words &mdash; stretches
-  of the interview the machine transcribed and the human transcript does not cover
-  at all. Read the misheard figure as the accuracy number, and treat the total as a
-  measure of how differently the two sources were produced.</p>
+  and <b>{unrecorded:.1f}%</b> spoken but unrecorded by the transcriber. An earlier
+  version of this page put the last figure at 31% and the total in the forties: that
+  was an artifact of scoring whole sessions against transcripts that stop early, most
+  of them at a hard 32-minute cutoff. Restricted to the covered span, insertions
+  collapse to about a point and <b>deletions are the largest term</b>. The number to
+  quote for transcription accuracy is the misheard figure.</p>
 </section>"""
 
 

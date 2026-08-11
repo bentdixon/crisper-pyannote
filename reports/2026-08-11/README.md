@@ -4,6 +4,13 @@ Six systems scored against the human transcripts over all 269 AMPSCZ/PSYCHS
 visits, plus PII redaction. Everything here is generated; see "Regenerating"
 below.
 
+**Scoring is restricted to the span each human transcript actually covers.**
+The transcripts stop early on a third of this cohort -- 97 of 269 visits under
+80% covered, 34 under 50%, and the worst stop at a hard 32-minute cutoff
+regardless of session length. Scoring whole sessions against partial references
+charged every system for minutes the reference never described and inflated WER
+from roughly 12% to roughly 42%.
+
 Interactive version: https://claude.ai/code/artifact/bf6f5c1c-6f6c-411d-9c81-c832db2d52f5
 
 ## Headline numbers
@@ -12,19 +19,21 @@ Per 100 reference words, all 269 visits (`tables/metrics-all-visits.csv`):
 
 | System | WER | excl. insertions | sWER | DER confusion | QTP-F1 |
 |---|---:|---:|---:|---:|---:|
-| CrisperWhisper 2.0 + pyannote community-1 | 41.9 | **10.5** | 42.1 | 21.5 | **88.3** |
-| CrisperWhisper 2.0 + pyannote 3.1 | 43.7 | 10.6 | **41.7** | **17.7** | 87.1 |
-| Chirp-3 | 45.4 | 13.2 | 47.8 | 20.7 | 83.8 |
-| Chirp-3 + CrisperWhisper 2.0 verbatimize | 45.5 | 13.6 | 47.7 | 21.1 | 84.6 |
+| CrisperWhisper 2.0 + pyannote community-1 | **11.5** | **10.4** | **19.3** | 15.5 | **92.1** |
+| CrisperWhisper 2.0 + pyannote 3.1 | 12.8 | 10.6 | 19.8 | **12.4** | 90.5 |
+| Chirp-3 | 16.7 | 13.8 | 29.8 | 16.0 | 87.5 |
+| Chirp-3 + CrisperWhisper 2.0 verbatimize | 16.9 | 14.1 | 29.9 | 15.8 | 88.1 |
 
 Adding the Qwen2.5-7B review makes every metric worse for both pipelines, on
 269 of 269 visits. It is not worth running.
 
-**Do not quote WER as an accuracy figure.** 31 of those 42 points are words the
-machine transcribed that the human transcript does not record, 97% of them in
-unbroken runs of twenty or more words. The accuracy number is
-`wer-error-types.csv`: **4.1% of reference words misheard** for the
-community-1 pipeline, 6.4% missed.
+These are ordinary ASR numbers. The decomposition in `wer-error-types.csv`
+splits them further: for the community-1 pipeline, **4.0% of reference words
+misheard, 6.5% missed, 1.0% added**. Deletions are now the largest term, and
+insertions -- which used to carry half the total -- are about a point.
+
+The partner team's independent implementation agrees on the ordering:
+14.3% / 15.7% / 18.9% filler-normalized (`partner-wer.csv`).
 
 ## Figures (`figures/`, PNG at 2x)
 
@@ -64,9 +73,13 @@ figure here can be traced to the visits behind it. Keyed by full system name.
 
 ## Caveats that change how these read
 
-- **WER is not an accuracy score on this corpus.** The machine transcribes
-  verbatim; the human transcripts are semi-verbatim and, on many visits, cover
-  only part of the recording. Use the misheard/missed figures.
+- **Coverage-restricted scoring is what makes these numbers meaningful.** Any
+  figure computed over whole sessions against these transcripts is measuring
+  reference truncation, not transcription. The window runs from the first turn
+  to the *start* of the last one: turn ends are synthesized from the next turn's
+  start, so the final turn has no real end.
+- **The machine is still verbatim and the reference semi-verbatim.** That
+  remains a convention gap, now worth about a point rather than thirty.
 - **sWER was corrected on 2026-08-11.** Streams are capped at 1.0 and reference
   streams under five words dropped. An earlier version reported a 32-point gap
   between the two diarizers; the real gap is 0.3 points.

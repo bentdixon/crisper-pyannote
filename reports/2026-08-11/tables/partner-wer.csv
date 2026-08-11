@@ -1,7 +1,7 @@
 System,Visits,WER raw,WER normalized,WER filler-normalized,Median visit,Words per reference word
-Chirp-3 ASR + Chirp-3 diarization + Chirp-3 redaction,269,60.33,47.95,47.69,28.87,1.3395
-Chirp-3 ASR + CrisperWhisper 2.0 verbatimize + Chirp-3 diarization,269,60.80,49.00,48.82,30.55,1.3199
-CrisperWhisper 2.0 ASR + pyannote community-1,269,56.44,43.77,43.74,21.87,1.3052
-CrisperWhisper 2.0 ASR + pyannote community-1 + Qwen2.5-7B review,269,56.55,43.89,43.86,21.87,1.3062
-CrisperWhisper 2.0 ASR + pyannote 3.1,269,58.05,45.60,45.56,23.51,1.3309
-CrisperWhisper 2.0 ASR + pyannote 3.1 + Qwen2.5-7B review,269,58.05,45.60,45.56,23.51,1.3309
+Chirp-3 ASR + Chirp-3 diarization + Chirp-3 redaction,269,31.21,19.09,18.85,12.68,0.9388
+Chirp-3 ASR + CrisperWhisper 2.0 verbatimize + Chirp-3 diarization,269,32.04,20.50,20.33,13.11,0.9249
+CrisperWhisper 2.0 ASR + pyannote community-1,269,26.98,14.36,14.33,12.29,0.9209
+CrisperWhisper 2.0 ASR + pyannote community-1 + Qwen2.5-7B review,269,27.05,14.43,14.41,12.30,0.9213
+CrisperWhisper 2.0 ASR + pyannote 3.1,269,28.09,15.69,15.65,13.86,0.9405
+CrisperWhisper 2.0 ASR + pyannote 3.1 + Qwen2.5-7B review,269,28.09,15.70,15.65,13.86,0.9405

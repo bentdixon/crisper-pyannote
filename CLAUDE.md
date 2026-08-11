@@ -339,36 +339,35 @@ Add a system there and nowhere else. `plot_results.load_results` folds either
 form to the short key on read, so results files written before the rename still
 render.
 
-Final numbers, after the sWER correction below (`outputs/results.json`,
-rescored 2026-08-11):
+Final numbers (`outputs/results.json`, rescored 2026-08-11 after the sWER, WER
+ordering and coverage fixes below):
 
     system         visits     WER  WERnoIns    sWER     DER  DERconf  QTP-F1
-    chirp3            269  0.8748    0.4392  0.4785  0.6907   0.2071  0.8382
-    verbatimize       269  0.8751    0.4438  0.4775  0.6346   0.2108  0.8458
-    ours              269  0.8374    0.4053  0.4205  0.2242   0.2146  0.8832
-    ours_llm          269  0.8385    0.4058  0.4241  0.2254   0.2157  0.8823
-    baseline          269  0.8670    0.4129  0.4174  0.2054   0.1774  0.8706
-    baseline_llm      269  0.8670    0.4129  0.4231  0.2072   0.1793  0.8695
+    chirp3            269  0.1667    0.1376  0.2984  0.1860   0.1599  0.8752
+    verbatimize       269  0.1686    0.1412  0.2985  0.1796   0.1584  0.8814
+    ours              269  0.1150    0.1041  0.1930  0.1620   0.1553  0.9214
+    ours_llm          269  0.1157    0.1046  0.1970  0.1633   0.1564  0.9203
+    baseline          269  0.1284    0.1063  0.1983  0.1487   0.1240  0.9048
+    baseline_llm      269  0.1284    0.1063  0.2040  0.1508   0.1258  0.9037
 
 Readings that survive scrutiny:
 
-- **community-1 and pyannote 3.1 are level on sWER**: 0.4205 vs 0.4174, a gap
-  of 0.3 points. An earlier version of this file claimed 0.835 vs 0.517 and
+- **community-1 and pyannote 3.1 are level on sWER**: 0.193 vs 0.198, a gap of
+  half a point. An earlier version of this file claimed 0.835 vs 0.517 and
   called it "pyannote 3.1 beats community-1 on speaker attribution". That was
   a metric artifact, not a result -- see the sWER section below. Do not quote
   the old figure.
-- **pyannote 3.1 does lead DER confusion**, 0.177 vs 0.215 mean and 0.160 vs
-  0.202 median, losing on only 23 of 269 visits. This is bounded, consistent
-  and real, but it is 3-4 points, not the 32 the broken sWER implied.
-- **community-1 leads WER excluding insertions (0.405, best in table) and
-  QTP-F1 (0.883)**, so neither diarizer dominates.
+- **pyannote 3.1 does lead DER confusion**, 0.124 vs 0.155. This is bounded,
+  consistent and real, but it is 3 points, not the 32 the broken sWER implied.
+- **community-1 leads WER (0.115), WER excluding insertions (0.104), sWER
+  (0.193) and QTP-F1 (0.921)**, so pyannote 3.1's only win is DER confusion.
 - **The LLM review is worse on every metric for both trees, 269/269 visits.**
   Never better, not once. Its speaker flags also carry fabricated
   justifications (one flagged a turn for "contains '?' and starts with 'how
   often'" when it contained neither) and only 15 of 163 applied. Drop it.
-- All six systems sit at 1.33-1.36 hypothesis words per reference word. That
-  agreement is the check that matters: ours and chirp3 match to three decimals
-  while sharing no code.
+- Within the covered span all systems sit at 0.92-0.94 hypothesis words per
+  reference word: slightly fewer words than the transcript, because deletions
+  now outweigh insertions.
 
 ### sWER was measuring stream count, not attribution (fixed 2026-08-11)
 
@@ -397,6 +396,45 @@ property of the reference). `swer_uncapped` is retained the way
 
 Community-1 itself was never at fault: it found exactly 2 speakers on all 269
 files.
+
+### The human transcripts stop early, and scoring must respect that
+
+The single largest distortion in this evaluation, found on 2026-08-11 by asking
+what the insertions actually were. `scripts/coverage.py` now restricts every
+scorer to the span each human transcript covers; before that, whole sessions
+were scored against partial references and the untranscribed remainder was
+charged as insertions.
+
+    human transcript coverage of audio, 269 visits
+    min 26%   p10 47%   p25 64%   median 96%   p75 100%   max 100%
+    97 visits under 80% covered, 34 under 50%
+    mean transcribed 26.1 min against mean audio 37.2 min
+
+The worst cases stop at a hard cutoff regardless of session length -- 32.0 of
+122.8 minutes, 31.9 of 118.2, 31.9 of 107.6, 31.9 of 102.5, 32.0 of 100.9 --
+so roughly the first half hour was transcribed and the rest was not.
+
+The tell was that two systems sharing no code inserted nearly the same 8400
+words on one visit (Chirp-3 from 0:53:20, ours from 0:59:22, both to 2:02:48).
+Independent systems do not hallucinate an hour in agreement; the reference had
+ended. Corpus-wide, 97% of inserted words sat in unbroken runs of 20+ words.
+
+Effect of restricting to the covered span, for our pipeline:
+
+    WER          0.419 -> 0.115
+    insertions   0.314 -> 0.011
+    sWER         0.421 -> 0.193
+    QTP-F1       0.883 -> 0.921
+
+The window runs from the first turn's start to the **last turn's start**, not
+its end: turn ends are synthesized from the following turn's start, so the
+final turn has no real end and `load_timestamped_text` stretches it to the full
+audio duration -- exactly the untranscribed remainder being excluded. Dropping
+that one turn costs a few words out of hundreds.
+
+Applied in `evaluate_systems.py`, `score_partner_wer.py`, `error_taxonomy.py`,
+`score_redaction.py` and `export_insertions.py`. Any number produced before
+this change is measuring reference truncation.
 
 ### There is no stereo channel advantage on this corpus
 
@@ -452,9 +490,9 @@ outputs are kept at `outputs/ours_continuation_broken/` for audit.
 
 Consequence for reading older notes: ours' *apparent* WER win of 0.7005 was an
 artifact of under-transcribing -- fewer words means fewer insertions against a
-semi-verbatim reference. Corrected, it is 0.8374 and the system is better, not
-worse. Any metric computed before 2026-08-08 21:40 on the ours/ours_llm trees
-is invalid.
+semi-verbatim reference. Any metric computed before 2026-08-08 21:40 on the
+ours/ours_llm trees is invalid, and any WER computed before the coverage fix of
+2026-08-11 is invalid for a second, larger reason.
 
 Two data defects, not pipeline defects:
 
@@ -651,17 +689,17 @@ same difflib replace block, which is exactly the correspondence needed.
 `outputs/redaction.json`, all 269 visits:
 
     system                          recall  precision      F1   leak
-    community-1 + Gemma 4 31B        75.1%      30.8%   43.7%  10.3%
-    pyannote 3.1 + Gemma 4 31B       75.2%      29.2%   42.0%  13.2%
-    chirp3 (native)                  66.1%      20.2%   30.9%  18.7%
-    verbatimize                       8.7%      18.6%   11.8%  67.1%
-    ours / baseline (no redaction)     0 %          -       0%  ~76%
+    community-1 + Gemma 4 31B        73.5%      44.1%   55.1%  10.3%
+    pyannote 3.1 + Gemma 4 31B       73.8%      41.6%   53.2%  12.9%
+    chirp3 (native)                  63.8%      27.9%   38.8%  16.8%
+    verbatimize                       8.5%      27.4%   12.9%  64.2%
+    ours / baseline (no redaction)     0 %          -       0%  ~75%
 
 - **Gemma beats Chirp-3's native redaction on every measure** while redacting
-  *less* (2135 spans vs 2866): 9 points more sensitive, 10 more precise, and
-  half the leak rate.
-- **verbatimize re-identifies Chirp's redacted output.** It destroys 86% of
-  Chirp's redactions and takes the leak rate from 18.7% to 67.1%. Verified by
+  *less* (1449 spans vs 1996): 10 points more sensitive, 16 more precise, and
+  a third lower leak rate.
+- **verbatimize re-identifies Chirp's redacted output.** It destroys 87% of
+  Chirp's redactions and takes the leak rate from 16.8% to 64.2%. Verified by
   hand: `[DATE]. [DATE].` -> "May ninth", `[AGE]` -> "three". The verbatimize
   task transcribes from audio using Chirp's text as a guide, so where Chirp
   wrote a placeholder the model simply hears the real words. A pipeline that

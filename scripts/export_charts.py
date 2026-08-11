@@ -241,12 +241,13 @@ def extra_figures(data: dict, mono: dict | None, stereo: dict | None,
             "lower is better; segments sum to the reported WER",
             svg, w, h,
             "Filled pauses are removed from both sides before scoring, so um and uh "
-            "contribute nothing here. Warm segments are transcription error -- words "
-            "heard wrong or missed. Cool segments are speech the machine produced that "
-            "the human transcript does not record, which is not a transcription failure "
-            "and dominates the total. 97% of inserted words fall in unbroken runs of "
-            "twenty or more, with single runs above four thousand words: stretches of "
-            "interview the human transcript does not cover at all.",
+            "contribute nothing here, and scoring is restricted to the span each human "
+            "transcript covers -- they stop early on a third of this cohort, most of "
+            "those at a hard 32-minute cutoff, and including the remainder inflated "
+            "WER from roughly 12% to roughly 42%. Warm segments are transcription "
+            "error: words heard wrong or missed. Cool segments are speech the machine "
+            "produced that the transcript does not record, a convention difference "
+            "rather than a failure.",
         )))
 
     svg, w, h = composition_svg(aggregate, present)
