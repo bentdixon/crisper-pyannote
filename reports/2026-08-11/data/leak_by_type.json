@@ -1,0 +1,171 @@
+{
+  "aggregate": {
+    "Chirp-3 ASR + Chirp-3 diarization + Chirp-3 redaction": {
+      "redactions": 1996,
+      "by_type": {
+        "name": {
+          "spans": 208,
+          "leaked": 18,
+          "leak_rate": 0.08653846153846154
+        },
+        "location": {
+          "spans": 80,
+          "leaked": 23,
+          "leak_rate": 0.2875
+        },
+        "date": {
+          "spans": 4,
+          "leaked": 1,
+          "leak_rate": 0.25
+        },
+        "age": {
+          "spans": 2,
+          "leaked": 0,
+          "leak_rate": 0.0
+        },
+        "unclassified": {
+          "spans": 16,
+          "leaked": 10,
+          "leak_rate": 0.625
+        }
+      },
+      "spans": 310,
+      "leaked": 52
+    },
+    "Chirp-3 ASR + CrisperWhisper 2.0 verbatimize + Chirp-3 diarization": {
+      "redactions": 264,
+      "by_type": {
+        "name": {
+          "spans": 208,
+          "leaked": 124,
+          "leak_rate": 0.5961538461538461
+        },
+        "location": {
+          "spans": 80,
+          "leaked": 64,
+          "leak_rate": 0.8
+        },
+        "date": {
+          "spans": 4,
+          "leaked": 1,
+          "leak_rate": 0.25
+        },
+        "age": {
+          "spans": 2,
+          "leaked": 0,
+          "leak_rate": 0.0
+        },
+        "unclassified": {
+          "spans": 16,
+          "leaked": 10,
+          "leak_rate": 0.625
+        }
+      },
+      "spans": 310,
+      "leaked": 199
+    },
+    "CrisperWhisper 2.0 ASR + pyannote community-1": {
+      "redactions": 0,
+      "by_type": {
+        "name": {
+          "spans": 208,
+          "leaked": 150,
+          "leak_rate": 0.7211538461538461
+        },
+        "location": {
+          "spans": 80,
+          "leaked": 72,
+          "leak_rate": 0.9
+        },
+        "date": {
+          "spans": 4,
+          "leaked": 1,
+          "leak_rate": 0.25
+        },
+        "age": {
+          "spans": 2,
+          "leaked": 0,
+          "leak_rate": 0.0
+        },
+        "unclassified": {
+          "spans": 16,
+          "leaked": 10,
+          "leak_rate": 0.625
+        }
+      },
+      "spans": 310,
+      "leaked": 233
+    },
+    "CrisperWhisper 2.0 ASR + pyannote community-1 + Gemma 4 31B redaction": {
+      "redactions": 1449,
+      "by_type": {
+        "name": {
+          "spans": 208,
+          "leaked": 17,
+          "leak_rate": 0.08173076923076923
+        },
+        "location": {
+          "spans": 80,
+          "leaked": 5,
+          "leak_rate": 0.0625
+        },
+        "date": {
+          "spans": 4,
+          "leaked": 0,
+          "leak_rate": 0.0
+        },
+        "age": {
+          "spans": 2,
+          "leaked": 0,
+          "leak_rate": 0.0
+        },
+        "unclassified": {
+          "spans": 16,
+          "leaked": 10,
+          "leak_rate": 0.625
+        }
+      },
+      "spans": 310,
+      "leaked": 32
+    },
+    "CrisperWhisper 2.0 ASR + pyannote 3.1 + Gemma 4 31B redaction": {
+      "redactions": 1544,
+      "by_type": {
+        "name": {
+          "spans": 208,
+          "leaked": 17,
+          "leak_rate": 0.08173076923076923
+        },
+        "location": {
+          "spans": 80,
+          "leaked": 13,
+          "leak_rate": 0.1625
+        },
+        "date": {
+          "spans": 4,
+          "leaked": 0,
+          "leak_rate": 0.0
+        },
+        "age": {
+          "spans": 2,
+          "leaked": 0,
+          "leak_rate": 0.0
+        },
+        "unclassified": {
+          "spans": 16,
+          "leaked": 10,
+          "leak_rate": 0.625
+        }
+      },
+      "spans": 310,
+      "leaked": 40
+    }
+  },
+  "spans_by_type": {
+    "date": 4,
+    "name": 208,
+    "unclassified": 16,
+    "location": 80,
+    "age": 2
+  }
+}
