@@ -245,7 +245,9 @@ def main(argv: list[str] | None = None) -> int:
             if not exposed:
                 clean_transcripts[name] += 1
 
-            per_visit.setdefault(relative.as_posix(), {})[name] = {
+            # Labelled, like every other scorer's per_visit block, so the
+            # report can look a system up the same way everywhere.
+            per_visit.setdefault(relative.as_posix(), {})[registry.label_of(name)] = {
                 "locations": len(locations),
                 "exposed": len(exposed),
                 "exposed_rate": len(exposed) / len(locations),

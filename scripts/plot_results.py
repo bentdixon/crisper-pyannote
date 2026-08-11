@@ -663,7 +663,7 @@ def leak_type_svg(data: dict | None, legend: bool = False) -> tuple[str, int, in
     aggregate = data.get("aggregate", {})
     rows = []
     for name, parts, colour, _ in SYSTEMS:
-        entry = aggregate.get(registry.label_of(name)) or aggregate.get(name)
+        entry = registry.entry_of(aggregate, name)
         if not entry:
             continue
         # A system with no redaction step leaks every span by construction;
@@ -745,6 +745,162 @@ def leak_type_svg(data: dict | None, legend: bool = False) -> tuple[str, int, in
     out.append(key)
     out.append("</svg>")
     return "".join(out), width, total_height
+
+
+def exposure_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
+    """Per-transcript exposure: how many transcripts are clean, and how badly
+    the rest are not.
+
+    A distribution rather than a mean, because the question is operational --
+    "can I release this transcript" is asked one transcript at a time, and an
+    average of 27% exposed tells you nothing about how many files are safe.
+    """
+    if not data:
+        return "", 0, 0
+    aggregate = data.get("aggregate", {})
+    per_visit = data.get("per_visit", {})
+    rows = []
+    for name, parts, colour, _ in SYSTEMS:
+        entry = registry.entry_of(aggregate, name)
+        if not entry:
+            continue
+        values = sorted(
+            registry.entry_of(v, name)["exposed"]
+            for v in per_visit.values() if registry.entry_of(v, name)
+        )
+        if not values:
+            continue
+        rows.append((parts, colour, entry, values))
+    if not rows:
+        return "", 0, 0
+
+    line_h = 14
+    band_h = 26
+    max_lines = max(len(p) for p, _, _, _ in rows)
+    row_h = max(band_h + 12, max_lines * line_h + 8)
+    gap, pad_l, pad_r, pad_t, pad_b = 14, 250, 92, 20, 40
+    plot_w = 320
+    height = pad_t + len(rows) * (row_h + gap) + pad_b
+    width = pad_l + plot_w + pad_r
+
+    ceiling = max(v for _, _, _, values in rows for v in values) or 1
+    # Buckets: clean, a handful, many. The first is the number people act on.
+    buckets = [(0, 0, "none"), (1, 4, "1-4"), (5, 19, "5-19"), (20, ceiling, "20+")]
+    shades = ["#1baf7a", "#eda100", "#e8834a", "#c0392b"]
+
+    key, key_height = ("", 0)
+    if legend:
+        key, key_height = swatch_legend(
+            [
+                (f"{label} identifier locations left open", shades[i], "")
+                for i, (_, _, label) in enumerate(buckets)
+            ],
+            plot_w + pad_l, height + 8, columns=2,
+        )
+        key_height += 14
+    total_height = height + key_height
+
+    out = [
+        f'<svg viewBox="0 0 {width} {total_height}" width="{width}" '
+        f'height="{total_height}" role="img" '
+        f'aria-label="Per-transcript PII exposure by system">'
+    ]
+    for index, (label_parts, _, entry, values) in enumerate(rows):
+        y = pad_t + index * (row_h + gap)
+        block = len(label_parts) * line_h
+        first = y + (row_h - block) / 2 + line_h - 3
+        for line_index, component in enumerate(label_parts):
+            suffix = " +" if line_index < len(label_parts) - 1 else ""
+            out.append(
+                f'<text x="{pad_l - 12}" y="{first + line_index * line_h:.1f}" '
+                f'text-anchor="end" class="cat">{escape(component + suffix)}</text>'
+            )
+        counts = [
+            sum(1 for v in values if low <= v <= high) for low, high, _ in buckets
+        ]
+        total = sum(counts) or 1
+        cursor = pad_l
+        by = y + (row_h - band_h) / 2
+        for slot, count in enumerate(counts):
+            w = count / total * plot_w
+            if w <= 0:
+                continue
+            out.append(
+                f'<rect x="{cursor:.1f}" y="{by:.1f}" width="{w:.1f}" '
+                f'height="{band_h}" fill="{shades[slot]}"/>'
+            )
+            if w > 26:
+                out.append(
+                    f'<text x="{cursor + w / 2:.1f}" y="{by + band_h / 2 + 4:.1f}" '
+                    f'text-anchor="middle" class="inbar">{count}</text>'
+                )
+            cursor += w
+        out.append(
+            f'<text x="{width - 8}" y="{by + band_h / 2 + 4:.1f}" text-anchor="end" '
+            f'class="val">{counts[0]} of {total} clean</text>'
+        )
+
+    out.append(
+        f'<text x="{pad_l}" y="{height - pad_b + 24}" class="tick">'
+        f'each band is the share of transcripts in that exposure bucket'
+        f'</text>'
+    )
+    out.append(key)
+    out.append("</svg>")
+    return "".join(out), width, total_height
+
+
+def exposure_panel(data: dict | None) -> str:
+    """Per-transcript exposure with the bounds the metric actually supports."""
+    svg, _, _ = exposure_svg(data)
+    if not svg:
+        return ""
+    aggregate = data.get("aggregate", {})
+    rows = []
+    for name, parts, colour, _ in SYSTEMS:
+        entry = registry.entry_of(aggregate, name)
+        if not entry:
+            continue
+        gold = (
+            f'{entry["gold_exposed_rate"] * 100:.0f}%'
+            if entry.get("gold_exposed_rate") is not None else "-"
+        )
+        rows.append(
+            f'<tr><td class="sys"><span class="swatch" style="background:{colour}"></span>'
+            f'{escape(" + ".join(parts))}</td>'
+            f'<td class="num">{entry["transcripts"]}</td>'
+            f'<td class="num">{entry["gold_exposed"]} / {entry["gold_locations"]} ({gold})</td>'
+            f'<td class="num">{entry["exposed"]} / {entry["pii_locations"]} '
+            f'({entry["exposed_rate"] * 100:.0f}%)</td>'
+            f'<td class="num">{entry["clean_transcripts"]} '
+            f'({entry["clean_transcript_rate"] * 100:.0f}%)</td></tr>'
+        )
+    return f"""
+  <h3 class="condhead">Per-transcript exposure
+    <span class="dir">how many identifier locations each transcript still leaves open</span></h3>
+  <p class="prose">The leak rate above can only be measured where the transcriber left
+  an identifier's surface form intact: 310 spans in 35 files. This asks the operational
+  question over the whole cohort instead. A <em>PII location</em> is any position where
+  the human marked a span &mdash; including the 577 already scrubbed to
+  <code>{{redacted}}</code>, which no verbatim search can test &mdash; or where another
+  system emitted a placeholder. A system is exposed at a location when it redacted
+  nothing there.</p>
+  {svg}
+  <div class="tablewrap"><table>
+    <thead><tr><th>System</th><th>Transcripts</th>
+      <th>Exposed, human-marked spans</th><th>Exposed, all known locations</th>
+      <th>Fully clean</th></tr></thead>
+    <tbody>{"".join(rows)}</tbody>
+  </table></div>
+  <p class="figcap">Two bounds, and the truth sits between them. The human-marked column
+  counts only verified PII, so it is the floor. The all-locations column includes spans
+  proposed by other systems, some of which are false positives that a system was right
+  to skip, so it is the ceiling. Both are computed leave-one-out: a system is never
+  judged against its own detections, because scoring a system on locations it proposed
+  hands the win to whichever redactor is most aggressive &mdash; done that way, Chirp-3
+  scored 34% against Gemma's 52%, reversing every other measure. Exposure is a lower
+  bound on risk in one more sense: an identifier that no transcriber marked and no
+  system caught is invisible here.</p>"""
 
 
 def leak_type_panel(data: dict | None) -> str:
@@ -876,7 +1032,8 @@ def redaction_svg(data: dict | None) -> tuple[str, int, int]:
     return "".join(out), width, height
 
 
-def redaction_panel(data: dict | None, leaks: dict | None = None) -> str:
+def redaction_panel(data: dict | None, leaks: dict | None = None,
+                    exposure: dict | None = None) -> str:
     """The diverging chart with its table and caveats, for the report page."""
     svg, _, _ = redaction_svg(data)
     if not svg:
@@ -920,6 +1077,7 @@ def redaction_panel(data: dict | None, leaks: dict | None = None) -> str:
       <th>Precision</th><th>F1</th><th>Leak rate</th></tr></thead>
     <tbody>{"".join(table_rows)}</tbody>
   </table></div>
+  {exposure_panel(exposure)}
   {leak_type_panel(leaks)}
   <div class="caveats" style="margin-top:26px">
     <div class="caveat">
@@ -1535,6 +1693,7 @@ def build_page(
     redaction_data: dict | None = None,
     taxonomy: dict | None = None,
     leaks: dict | None = None,
+    exposure: dict | None = None,
 ) -> str:
     aggregate = data.get("aggregate", {})
     per_visit = data.get("per_visit", {})
@@ -1811,7 +1970,7 @@ footer {{ margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--grid)
 </section>
 {taxonomy_panel(taxonomy)}
 {conditions_section(mono, stereo)}
-{redaction_panel(redaction_data, leaks)}
+{redaction_panel(redaction_data, leaks, exposure)}
 {partner_section(partner_summary or {})}
 <section>
   <h2>Reading these numbers</h2>
@@ -1883,6 +2042,10 @@ def main() -> int:
         help="taxonomy.json from error_taxonomy.py; adds the WER decomposition",
     )
     parser.add_argument(
+        "--exposure", default=None,
+        help="exposure.json from exposure.py; adds the per-transcript panel",
+    )
+    parser.add_argument(
         "--leaks", default=None,
         help="leak_by_type.json from leak_by_type.py; adds the by-type leak chart",
     )
@@ -1898,6 +2061,7 @@ def main() -> int:
     redaction_data = load_results(args.redaction)
     taxonomy = json.loads(Path(args.taxonomy).read_text()) if args.taxonomy else None
     leaks = json.loads(Path(args.leaks).read_text()) if args.leaks else None
+    exposure = json.loads(Path(args.exposure).read_text()) if args.exposure else None
     font_b64 = ""
     if args.font and Path(args.font).exists():
         font_b64 = base64.b64encode(Path(args.font).read_bytes()).decode()
@@ -1905,7 +2069,7 @@ def main() -> int:
     Path(args.output).write_text(
         build_page(
             data, font_b64, partner_summary, mono, stereo, redaction_data,
-            taxonomy, leaks,
+            taxonomy, leaks, exposure,
         )
     )
     print(f"wrote {args.output}")
