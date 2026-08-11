@@ -9,19 +9,31 @@ Chunked deliberately. Sessions run to 75 minutes and 20k words, and the
 previous LLM pass in this repo (Qwen2.5-7B reviewing whole transcripts) silently
 exceeded its 32k context on at least one visit and produced a degraded review
 nobody could distinguish from a good one. Here the transcript is cut into
-overlapping windows of a few hundred words, each redacted independently, and
-the windows are stitched back by word index. A window that fails, times out or
-returns unusable JSON falls back to its original words and is counted -- a
-failed window must never look like a window with no PII in it.
+chunks of at most 5000 characters, always ending on a sentence boundary, and
+each is redacted independently. A chunk that fails, times out or returns
+unusable JSON falls back to its original words and is counted -- a failed chunk
+must never look like a chunk with no PII in it.
 
-The model returns the indices of words to redact, not rewritten text: asking a
-31B model to reproduce 400 words verbatim invites paraphrase, and the whole
-point is that only the identifying tokens change. Indices are validated against
-the window before anything is applied.
+Addressing is by sentence number plus the quoted text, not character offsets
+and not word indices:
+
+  - Character offsets require the model to count characters, which it cannot do
+    reliably, and an off-by-a-few silently redacts the wrong span.
+  - Word indices require it to track a running count over hundreds of tokens,
+    and a wrong index is undetectable -- it names a real word, just not the
+    intended one.
+  - A sentence number plus the exact words is checkable. The quote is searched
+    for inside the sentence it was attributed to; if it is not there, the model
+    invented it and the span is dropped and counted. Sentences are short enough
+    that the number is easy to get right, and the quote pins the span within it.
+
+Mapping back to word indices is then deterministic, which is what the pipeline
+needs since redaction replaces individual word tokens and must preserve their
+timestamps.
 
 Usage:
     uv run python scripts/redact_llm.py --outputs outputs/ours \
-        --cohort /path/to/cohort --shard 1/4 --device cuda:0
+        --shard 1/3 --device cuda:0
 """
 
 from __future__ import annotations
@@ -40,11 +52,20 @@ logger = logging.getLogger("redact_llm")
 
 MODEL_ID = "google/gemma-4-31b-it"
 
-# Window size in words. Small enough that the model attends to every token and
-# that one bad window costs little, large enough to carry the context that makes
-# "May" a date rather than a name.
-WINDOW_WORDS = 400
-OVERLAP_WORDS = 40
+# Chunks are measured in characters and cut on sentence boundaries: a chunk
+# grows until the next sentence would take it past MAX_CHUNK_CHARS, so no
+# sentence is ever split across two chunks and the model never sees half a
+# clause. One sentence longer than the limit becomes its own oversized chunk
+# rather than being cut mid-sentence.
+MAX_CHUNK_CHARS = 5000
+OVERLAP_SENTENCES = 1
+
+# Sentences end at terminal punctuation on a word. CrisperWhisper and Chirp both
+# attach punctuation to the word token, so this needs no separate tokenizer, and
+# a run of words with no terminal punctuation at all is capped so one unpunctuated
+# passage cannot swallow a whole transcript.
+SENTENCE_END = re.compile(r"[.!?]+[\"')\]]*$")
+MAX_SENTENCE_WORDS = 120
 
 # The label set Chirp-3 emits, so both systems' output lands in the same space
 # and score_redaction can compare categories without a translation table.
@@ -52,8 +73,8 @@ LABELS = ["PERSON_NAME", "DATE", "LOCATION", "AGE", "GENDER", "US_STATE"]
 
 PROMPT = """You are de-identifying a transcript of a clinical research interview.
 
-Below is a numbered list of words. Identify every word that is part of \
-personally identifying information, under this label set:
+Below are numbered sentences. Identify every span of personally identifying \
+information, under this label set:
 
 PERSON_NAME  first names, surnames, nicknames of any real person
 DATE         specific dates: "May 9th", "March", "the 14th". NOT relative time
@@ -65,18 +86,20 @@ AGE          a person's stated age in years
 GENDER       an explicit gender term used to identify a specific person
 
 Rules:
-- Mark ONLY the words that are themselves identifying. Do not mark surrounding
-  words like "in", "on", "my", "called".
+- Quote ONLY the identifying words themselves, exactly as they appear in the
+  sentence. Do not include surrounding words like "in", "on", "my", "called".
 - Do not mark the interviewer's generic questions, clinical terms, or common
   words that merely resemble names.
-- If a name is already written as [PERSON_NAME] or similar, ignore it.
+- If a span is already written as [PERSON_NAME] or similar, ignore it.
 - Relative time expressions are NOT dates.
 
 Return ONLY a JSON object of this exact shape, no prose, no markdown fence:
-{{"redactions": [{{"index": <word number>, "label": "<LABEL>"}}]}}
+{{"redactions": [{{"sentence": <sentence number>, "text": "<exact words>", \
+"label": "<LABEL>"}}]}}
+The "text" must appear verbatim in that sentence.
 If there is no identifying information, return {{"redactions": []}}.
 
-Words:
+Sentences:
 {numbered}
 """
 
@@ -94,24 +117,73 @@ def load_model(model_id: str = MODEL_ID, device: str | None = None):
     return model, tokenizer
 
 
-def build_windows(words: list[dict]) -> list[tuple[int, int]]:
-    """Overlapping [start, end) word-index windows covering the transcript.
-
-    The overlap exists so a span sitting on a boundary is seen whole by at least
-    one window; stitching takes the union of redactions, so seeing a span twice
-    is harmless while seeing half of it is not.
-    """
-    if not words:
-        return []
-    step = max(WINDOW_WORDS - OVERLAP_WORDS, 1)
-    windows = []
+def split_sentences(words: list[dict]) -> list[tuple[int, int]]:
+    """Word-index ranges, one per sentence."""
+    sentences: list[tuple[int, int]] = []
     start = 0
-    while start < len(words):
-        windows.append((start, min(start + WINDOW_WORDS, len(words))))
-        if start + WINDOW_WORDS >= len(words):
-            break
-        start += step
-    return windows
+    for index, word in enumerate(words):
+        text = str(word.get("word", "")).strip()
+        long_enough = index - start + 1 >= MAX_SENTENCE_WORDS
+        if (text and SENTENCE_END.search(text)) or long_enough:
+            sentences.append((start, index + 1))
+            start = index + 1
+    if start < len(words):
+        sentences.append((start, len(words)))
+    return sentences
+
+
+def build_chunks(sentences: list[tuple[int, int]], words: list[dict]) -> list[list[int]]:
+    """Group sentence indices into chunks of at most MAX_CHUNK_CHARS.
+
+    Returns lists of sentence indices rather than word offsets, because the
+    model is addressed in sentences and the mapping back has to agree with what
+    it was shown. Each chunk repeats the previous chunk's last sentence, so a
+    span in the first sentence of a chunk has been seen once with its left
+    context; redactions are unioned, so seeing a span twice costs nothing.
+    """
+    lengths = [
+        sum(len(str(words[i].get("word", "")).strip()) + 1 for i in range(a, b))
+        for a, b in sentences
+    ]
+    chunks: list[list[int]] = []
+    current: list[int] = []
+    size = 0
+    for index, length in enumerate(lengths):
+        if current and size + length > MAX_CHUNK_CHARS:
+            chunks.append(current)
+            current = current[-OVERLAP_SENTENCES:] if OVERLAP_SENTENCES else []
+            size = sum(lengths[i] for i in current)
+        current.append(index)
+        size += length
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def sentence_text(words: list[dict], span: tuple[int, int]) -> str:
+    return " ".join(str(words[i].get("word", "")).strip() for i in range(*span))
+
+
+def locate(words: list[dict], span: tuple[int, int], needle: str) -> list[int]:
+    """Word indices inside one sentence whose text matches `needle`.
+
+    The model quotes the identifying words back, so this is a search rather than
+    a coordinate lookup: a quote that cannot be found is a hallucination and is
+    dropped, which a bare index could never reveal. Matching is on normalized
+    tokens so punctuation attached to a word does not defeat it.
+    """
+    target = [normalize(t) for t in needle.split() if normalize(t)]
+    if not target:
+        return []
+    tokens = [normalize(str(words[i].get("word", ""))) for i in range(*span)]
+    for offset in range(len(tokens) - len(target) + 1):
+        if tokens[offset:offset + len(target)] == target:
+            return list(range(span[0] + offset, span[0] + offset + len(target)))
+    return []
+
+
+def normalize(token: str) -> str:
+    return re.sub(r"[^a-z0-9']", "", token.lower())
 
 
 def parse_response(text: str) -> list[dict] | None:
@@ -136,27 +208,34 @@ def parse_response(text: str) -> list[dict] | None:
         if not isinstance(entry, dict):
             continue
         try:
-            index = int(entry.get("index"))
+            sentence = int(entry.get("sentence"))
         except (TypeError, ValueError):
             continue
+        text = str(entry.get("text", "")).strip()
         label = str(entry.get("label", "")).strip().upper()
-        if label not in LABELS:
+        if not text or label not in LABELS:
             continue
-        clean.append({"index": index, "label": label})
+        clean.append({"sentence": sentence, "text": text, "label": label})
     return clean
 
 
-def redact_window(model, tokenizer, words: list[dict], offset: int,
-                  max_new_tokens: int = 900) -> tuple[dict[int, str], str | None]:
-    """Redactions for one window as {absolute word index: label}.
+def redact_chunk(model, tokenizer, words: list[dict], sentences: list[tuple[int, int]],
+                 chunk: list[int], max_new_tokens: int = 900,
+                 ) -> tuple[dict[int, str], str | None, int]:
+    """Redactions for one chunk as {absolute word index: label}.
 
-    Returns the reason string when the window could not be used, so the caller
-    can count failures instead of treating them as clean windows.
+    Returns the failure reason when the chunk could not be used -- so the caller
+    can count failures rather than treat them as clean chunks -- and the number
+    of quoted spans that could not be found in the sentence they were attributed
+    to, which is the model inventing text.
     """
     import torch
 
+    # Numbered by position within the chunk, so the model never has to reason
+    # about absolute offsets in a 20,000-word transcript.
     numbered = "\n".join(
-        f"{i} {str(w.get('word', '')).strip()}" for i, w in enumerate(words)
+        f"{local} {sentence_text(words, sentences[index])}"
+        for local, index in enumerate(chunk)
     )
     prompt = PROMPT.format(numbered=numbered)
     messages = [{"role": "user", "content": prompt}]
@@ -175,36 +254,48 @@ def redact_window(model, tokenizer, words: list[dict], offset: int,
 
     entries = parse_response(reply)
     if entries is None:
-        return {}, "unparseable JSON"
+        return {}, "unparseable JSON", 0
 
     out: dict[int, str] = {}
-    dropped = 0
+    unmatched = 0
     for entry in entries:
-        index = entry["index"]
-        # Out-of-range indices are the model hallucinating positions; applying
-        # them would redact unrelated words elsewhere in the session.
-        if not 0 <= index < len(words):
-            dropped += 1
+        local = entry["sentence"]
+        # A sentence number outside the chunk is the model addressing something
+        # it was never shown; applying it would redact unrelated speech.
+        if not 0 <= local < len(chunk):
+            unmatched += 1
             continue
-        out[offset + index] = entry["label"]
-    if dropped:
-        logger.debug("  dropped %d out-of-range index/indices", dropped)
-    return out, None
+        span = sentences[chunk[local]]
+        found = locate(words, span, entry["text"])
+        if not found:
+            unmatched += 1
+            continue
+        for index in found:
+            out[index] = entry["label"]
+    return out, None, unmatched
 
 
 def redact_words(model, tokenizer, words: list[dict]) -> tuple[list[dict], dict]:
-    """Apply windowed redaction, returning new words and a per-file report."""
-    windows = build_windows(words)
+    """Apply chunked redaction, returning new words and a per-file report."""
+    sentences = split_sentences(words)
+    chunks = build_chunks(sentences, words)
     redactions: dict[int, str] = {}
     failures = 0
-    for start, end in windows:
+    unmatched = 0
+    for number, chunk in enumerate(chunks, start=1):
         try:
-            found, reason = redact_window(model, tokenizer, words[start:end], start)
+            found, reason, missed = redact_chunk(
+                model, tokenizer, words, sentences, chunk,
+            )
         except Exception as error:
-            found, reason = {}, f"{type(error).__name__}: {error}"
+            found, reason, missed = {}, f"{type(error).__name__}: {error}", 0
+        unmatched += missed
         if reason:
             failures += 1
-            logger.warning("  window %d-%d unusable (%s); words kept", start, end, reason)
+            logger.warning(
+                "  chunk %d/%d unusable (%s); its words are kept unredacted",
+                number, len(chunks), reason,
+            )
             continue
         redactions.update(found)
 
@@ -222,8 +313,13 @@ def redact_words(model, tokenizer, words: list[dict]) -> tuple[list[dict], dict]
         out.append(copy)
 
     return out, {
-        "windows": len(windows),
-        "window_failures": failures,
+        "sentences": len(sentences),
+        "chunks": len(chunks),
+        "chunk_failures": failures,
+        # Spans the model quoted that do not occur in the sentence it named.
+        # Counted rather than silently dropped: a rising number means the model
+        # is inventing text, which no index-based protocol could have detected.
+        "unmatched_quotes": unmatched,
         "redacted_words": len(redactions),
     }
 
@@ -284,7 +380,7 @@ def main(argv: list[str] | None = None) -> int:
         payload = json.loads(path.read_text())
         words = payload["words"] if isinstance(payload, dict) else payload
         redacted, report = redact_words(model, tokenizer, words)
-        total_failures += report["window_failures"]
+        total_failures += report["chunk_failures"]
 
         destination = destination_for(path, args.suffix)
         body = dict(payload) if isinstance(payload, dict) else {}
@@ -292,13 +388,15 @@ def main(argv: list[str] | None = None) -> int:
         body["redaction"] = {"model": args.model, **report}
         destination.write_text(json.dumps(body, indent=2))
         logger.info(
-            "[%d/%d] %s: %d word(s) redacted over %d window(s), %d failed, %.0fs",
+            "[%d/%d] %s: %d word(s) redacted over %d chunk(s) / %d sentence(s), "
+            "%d chunk(s) failed, %d unmatched quote(s), %.0fs",
             index, len(files), path.parent.name, report["redacted_words"],
-            report["windows"], report["window_failures"], time.perf_counter() - started,
+            report["chunks"], report["sentences"], report["chunk_failures"],
+            report["unmatched_quotes"], time.perf_counter() - started,
         )
 
     if total_failures:
-        logger.warning("%d window(s) fell back to their original words", total_failures)
+        logger.warning("%d chunk(s) fell back to their original words", total_failures)
     return 0
 
 
