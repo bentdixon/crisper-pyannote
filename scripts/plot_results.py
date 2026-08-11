@@ -508,6 +508,91 @@ def redaction_panel(data: dict | None) -> str:
 </section>"""
 
 
+def comparison_chart(mono: dict, stereo: dict, title: str, key: str,
+                     direction: str = "lower is better") -> str:
+    """One row per system, a line joining its mono and stereo-container value.
+
+    A dumbbell rather than two separate charts: the quantity of interest is the
+    shift between conditions, and putting the two values on one row makes the
+    shift the thing you read, with its direction visible at a glance.
+    """
+    rows = []
+    for name, parts, colour, _ in SYSTEMS:
+        left = (mono.get("aggregate", {}).get(name) or {}).get(key)
+        right = (stereo.get("aggregate", {}).get(name) or {}).get(key)
+        if left is None or right is None:
+            continue
+        rows.append((name, parts, colour, left, right))
+    if not rows:
+        return ""
+
+    line_h = 14
+    max_lines = max(len(p) for _, p, _, _, _ in rows)
+    row_h = max(32, max_lines * line_h + 6)
+    gap, pad_l, pad_r, pad_t, pad_b = 12, 250, 74, 22, 46
+    plot_w = 320
+    height = pad_t + len(rows) * (row_h + gap) + pad_b
+    width = pad_l + plot_w + pad_r
+
+    values = [v for _, _, _, a, b in rows for v in (a, b)]
+    low, high = min(values), max(values)
+    span = (high - low) or max(high, 0.01)
+    low, high = max(low - span * 0.15, 0.0), high + span * 0.15
+
+    def x(value: float) -> float:
+        return pad_l + (value - low) / (high - low) * plot_w
+
+    out = [
+        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+        f'role="img" aria-label="{escape(title)}, mono against stereo container">'
+    ]
+    for i in range(5):
+        value = low + (high - low) * i / 4
+        gx = round(x(value), 1)
+        out.append(
+            f'<line x1="{gx}" y1="{pad_t}" x2="{gx}" y2="{height - pad_b}" '
+            f'stroke="{GRIDLINE}" stroke-width="1"/>'
+            f'<text x="{gx}" y="{height - pad_b + 15}" text-anchor="middle" '
+            f'class="tick">{value * 100:.0f}%</text>'
+        )
+
+    for index, (name, parts, colour, left, right) in enumerate(rows):
+        y = pad_t + index * (row_h + gap)
+        block = len(parts) * line_h
+        first = y + (row_h - block) / 2 + line_h - 3
+        for line_index, component in enumerate(parts):
+            suffix = " +" if line_index < len(parts) - 1 else ""
+            out.append(
+                f'<text x="{pad_l - 14}" y="{first + line_index * line_h:.1f}" '
+                f'text-anchor="end" class="cat">{escape(component + suffix)}</text>'
+            )
+        cy = y + row_h / 2
+        out.append(
+            f'<line x1="{x(left):.1f}" y1="{cy}" x2="{x(right):.1f}" y2="{cy}" '
+            f'stroke="{colour}" stroke-width="3" opacity="0.45"/>'
+            f'<circle cx="{x(left):.1f}" cy="{cy}" r="5" fill="#ffffff" '
+            f'stroke="{colour}" stroke-width="2"/>'
+            f'<circle cx="{x(right):.1f}" cy="{cy}" r="5" fill="{colour}"/>'
+            f'<text x="{width - 8}" y="{cy + 4}" text-anchor="end" class="val">'
+            f'{(right - left) * 100:+.1f}</text>'
+        )
+
+    ly = height - 12
+    out.append(
+        f'<circle cx="{pad_l}" cy="{ly - 4}" r="5" fill="#ffffff" stroke="{MUTED}" '
+        f'stroke-width="2"/><text x="{pad_l + 11}" y="{ly}" class="leg">'
+        f'mono files (n={len(mono.get("per_visit", {}))})</text>'
+        f'<circle cx="{pad_l + 150}" cy="{ly - 4}" r="5" fill="{MUTED}"/>'
+        f'<text x="{pad_l + 161}" y="{ly}" class="leg">stereo-container files '
+        f'(n={len(stereo.get("per_visit", {}))})</text></svg>'
+    )
+    return (
+        f'<h3 class="condhead">{escape(title)}'
+        f'<span class="dir">{escape(direction)}; right-hand number is the shift '
+        f'in points</span></h3>' + "".join(out)
+    )
+
+
 def condition_table(data: dict, caption: str) -> str:
     """One condition's systems scored on the metrics the condition is about.
 
@@ -555,28 +640,29 @@ def conditions_section(mono: dict | None, stereo: dict | None) -> str:
     otherwise. On this corpus that is 66 of 269 sessions, so comparing it with
     our pipeline as shipped measures a channel trick as well as a model.
     """
-    if not mono and not stereo:
+    if not (mono and stereo):
         return ""
-    tables = ""
-    if mono:
-        tables += condition_table(mono, "Nobody has channels: every file diarized from a mono downmix")
-    if stereo:
-        tables += condition_table(stereo, "The stereo subset, scored both ways on the same visits")
     return f"""
 <section>
-  <h2>Model gap, or channel gap?</h2>
-  <p class="prose">The other team's pipeline does not always use a diarization model.
-  Where a file is genuinely two-channel it reads speakers off the channels and never
-  calls pyannote at all, and 66 of these 269 sessions are stereo &mdash; so comparing it
-  with our pipeline as shipped measures a channel trick as well as a model. The first
-  table forces their pipeline onto pyannote everywhere, downmixing the stereo files, so
-  neither side has channel information. The second restricts to the files whose channels
-  are real and scores their pipeline twice, with and without channel access, on the
-  <em>same</em> visits &mdash; the difference between those two rows is what the channels
-  are worth. Our pipeline is identical in both: it already downmixes for transcription
-  (<code>asr.py</code>) and its diarization model downmixes internally, so it never saw
-  the channels in the first place.</p>
-  {tables}
+  <h2>Stereo-container files against mono files</h2>
+  <p class="prose">66 of the 269 sessions are stereo, and the obvious question was
+  whether the other team's pipeline was winning on speaker attribution by reading
+  speakers off the channels rather than by diarizing. It was not. Their own
+  channel-separation test &mdash; run here over every file &mdash; measures the average
+  loudness difference between left and right at real speech moments and requires 3.0 dB
+  before it trusts the channels. Across all 66 stereo files the measured separation runs
+  from <b>0.000 to 0.082 dB</b>. Every one of them is a stereo container holding
+  duplicated mono, so the channel path never fired on this corpus and all 269 files were
+  diarized by pyannote from a downmix.</p>
+  <p class="prose">What remains is still worth reading, but it is a comparison of
+  recording provenance rather than of channel access: sessions delivered as
+  stereo containers come from different sites and setups than the mono ones, and they
+  score differently on every system. The shift is far larger than any gap between
+  systems, which is a reminder that audio conditions dominate this corpus.</p>
+  {comparison_chart(mono, stereo, "Transcription accuracy", "WER_no_ins")}
+  {comparison_chart(mono, stereo, "Speaker confusion", "DER_confusion")}
+  {condition_table(mono, "Mono files")}
+  {condition_table(stereo, "Stereo-container files")}
 </section>"""
 
 
