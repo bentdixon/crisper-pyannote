@@ -1181,10 +1181,10 @@ def composition_panel(aggregate: dict, present: list[str]) -> str:
         '<figure class="panel wide">'
         '<figcaption><h3>What makes up the word error rate</h3>'
         '<span class="dir">lower is better</span>'
-        '<p>The three error types sum to WER. Insertions dominate because the '
-        'machine transcribes disfluencies the human transcripts leave out.</p>'
+        '<p>The three error types sum to WER. Insertions dominate, but not because '
+        'of disfluencies -- see the error-type breakdown above for what they are.</p>'
         '</figcaption>'
-        + "".join(out)
+        + svg
         + f'<div class="legend parts">{swatches}</div>'
         + f'<p class="figcap">{escape(CAPTIONS["composition"])}</p></figure>'
     )
