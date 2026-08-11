@@ -253,7 +253,14 @@ def score_visit(turns: list[dict], words: list[dict], legacy_der: bool = False) 
     if not reference or not hypothesis:
         return None
 
-    reference_text = normalize(" ".join(v["text"] for v in reference.values()))
+    # Chronological, NOT the concatenation of reference_streams' values. Those
+    # are grouped by speaker -- all of S1's turns, then all of S2's -- while the
+    # hypothesis is in time order, so pooling them compared the same words in
+    # two different orders and charged the difference as insertions plus
+    # deletions. It inflated WER by roughly 33 points corpus-wide (a 269-visit
+    # mean of 0.837 against 0.503 for our pipeline) and nothing about the output
+    # looked wrong, because every system paid it equally.
+    reference_text = normalize(" ".join(t["text"] for t in turns))
     hypothesis_text = normalize(" ".join(w["word"] for w in words))
     if not reference_text or not hypothesis_text:
         return None
