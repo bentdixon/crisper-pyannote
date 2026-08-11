@@ -77,6 +77,12 @@ SYSTEMS = [
         "#f5cc6b",
         "their pipeline, LLM review applied",
     ),
+    (
+        "baseline_mono",
+        ["CrisperWhisper 2.0 ASR", "pyannote 3.1 (forced mono)"],
+        "#b8791f",
+        "their pipeline with the stereo channel path disabled",
+    ),
 ]
 
 # (title, per-visit key, aggregate key, direction, caption)
@@ -155,10 +161,13 @@ CAPTIONS = {
     "sWER": (
         "Speaker-attributed word error rate. Reference and predicted speaker streams "
         "are matched by a Hungarian assignment on their time-overlap matrix, WER is "
-        "then computed within each reference stream, and the per-stream scores are "
-        "averaged. A system can score a respectable pooled WER and still put words in "
-        "the wrong speaker's mouth; the gap between a system's WER and its sWER is a "
-        "direct measure of that misattribution."
+        "computed within each reference stream, and the per-stream scores are averaged. "
+        "Each stream is capped at 1.0 and reference streams under five words are "
+        "discarded as transcript formatting artifacts. Both corrections matter: "
+        "uncapped, a stray one-word speaker line in a human transcript matched against "
+        "a large predicted stream scored 88.0 on a single visit and moved a system's "
+        "corpus average by 32 points, so the metric was ranking systems by how many "
+        "streams they emitted rather than by where they put the words."
     ),
     "DER": (
         "The share of speech time attributed to the wrong speaker, including "
@@ -346,6 +355,90 @@ def merge_partner(data: dict, partner: dict) -> dict:
             "clean_median": statistics.median(clean) if clean else None,
         }
     return summary
+
+
+# Systems whose speaker labels come from the frozen Chirp-3 bucket output and so
+# could not be re-run under a forced-mono condition. Shown, but marked.
+NOT_RERUN = {"chirp3", "verbatimize"}
+
+# The two metrics the mono/stereo split is about. WER is left out on purpose:
+# the condition changes diarization, and only incidentally the ASR input.
+CONDITION_METRICS = [
+    ("DER confusion", "DER_confusion", "lower is better"),
+    ("sWER", "sWER", "lower is better"),
+]
+
+
+def condition_table(data: dict, caption: str) -> str:
+    """One condition's systems scored on the metrics the condition is about.
+
+    Every system in the file gets a row, so the stereo table -- which scores the
+    other team's pipeline twice, once with channels and once forced to mono --
+    reads as a paired comparison on identical visits rather than a comparison
+    across two different visit sets.
+    """
+    aggregate = data.get("aggregate", {})
+    heads = "".join(f"<th>{escape(t)}</th>" for t, _, _ in CONDITION_METRICS)
+    rows = []
+    for name, label_parts, colour, note in SYSTEMS:
+        if name not in aggregate:
+            continue
+        flag = (
+            '<span class="note">labels from the frozen Chirp-3 output; not re-run</span>'
+            if name in NOT_RERUN else f'<span class="note">{escape(note)}</span>'
+        )
+        cells = []
+        for _, key, _ in CONDITION_METRICS:
+            value = aggregate[name].get(key)
+            cells.append(
+                f'<td class="num">{value * 100:.1f}%</td>' if value is not None
+                else '<td class="num">-</td>'
+            )
+        rows.append(
+            f'<tr><td class="sys"><span class="swatch" style="background:{colour}"></span>'
+            f'{escape(" + ".join(label_parts))}{flag}</td>' + "".join(cells) + "</tr>"
+        )
+    if not rows:
+        return ""
+    return (
+        f'<h3 class="condhead">{escape(caption)}'
+        f'<span class="dir">lower is better, n={len(data.get("per_visit", {}))}</span></h3>'
+        f'<div class="tablewrap"><table><thead><tr><th>System</th>{heads}</tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table></div>'
+    )
+
+
+def conditions_section(mono: dict | None, stereo: dict | None) -> str:
+    """Is the diarization gap a model gap or a channel gap?
+
+    The other team's pipeline reads speakers straight off the stereo channels
+    when the channels are genuinely separated, and only falls back to pyannote
+    otherwise. On this corpus that is 66 of 269 sessions, so comparing it with
+    our pipeline as shipped measures a channel trick as well as a model.
+    """
+    if not mono and not stereo:
+        return ""
+    tables = ""
+    if mono:
+        tables += condition_table(mono, "Nobody has channels: every file diarized from a mono downmix")
+    if stereo:
+        tables += condition_table(stereo, "The stereo subset, scored both ways on the same visits")
+    return f"""
+<section>
+  <h2>Model gap, or channel gap?</h2>
+  <p class="prose">The other team's pipeline does not always use a diarization model.
+  Where a file is genuinely two-channel it reads speakers off the channels and never
+  calls pyannote at all, and 66 of these 269 sessions are stereo &mdash; so comparing it
+  with our pipeline as shipped measures a channel trick as well as a model. The first
+  table forces their pipeline onto pyannote everywhere, downmixing the stereo files, so
+  neither side has channel information. The second restricts to the files whose channels
+  are real and scores their pipeline twice, with and without channel access, on the
+  <em>same</em> visits &mdash; the difference between those two rows is what the channels
+  are worth. Our pipeline is identical in both: it already downmixes for transcription
+  (<code>asr.py</code>) and its diarization model downmixes internally, so it never saw
+  the channels in the first place.</p>
+  {tables}
+</section>"""
 
 
 def partner_section(summary: dict) -> str:
@@ -738,7 +831,13 @@ def bar_panel(
     )
 
 
-def build_page(data: dict, font_b64: str, partner_summary: dict | None = None) -> str:
+def build_page(
+    data: dict,
+    font_b64: str,
+    partner_summary: dict | None = None,
+    mono: dict | None = None,
+    stereo: dict | None = None,
+) -> str:
     aggregate = data.get("aggregate", {})
     per_visit = data.get("per_visit", {})
     present = [n for n, *_ in SYSTEMS if n in aggregate]
@@ -874,6 +973,10 @@ svg .tick {{ font-family: 'DM Sans', sans-serif; font-size: 10px; font-weight: 5
 svg .inbar {{
   font-family: 'DM Sans', sans-serif; font-size: 10.5px; font-weight: 600; fill: #ffffff;
 }}
+.condhead {{
+  font-size: 15px; font-weight: 600; margin: 26px 0 8px;
+  display: flex; align-items: baseline; gap: 10px;
+}}
 .tablewrap {{ overflow-x: auto; }}
 table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
 th, td {{ text-align: right; padding: 9px 12px; border-bottom: 1px solid var(--grid); white-space: nowrap; }}
@@ -982,6 +1085,7 @@ footer {{ margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--grid)
   </table>
   </div>
 </section>
+{conditions_section(mono, stereo)}
 {partner_section(partner_summary or {})}
 <section>
   <h2>Reading these numbers</h2>
@@ -1000,10 +1104,16 @@ footer {{ margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--grid)
       between systems are meaningful; the absolute level is not.</p>
     </div>
     <div class="caveat">
-      <h3>sWER is the speaker-attribution number</h3>
+      <h3>sWER was corrected, and the correction was large</h3>
       <p>A system can score a good pooled WER and still put words on the wrong
-      speaker. sWER averages WER over reference streams after matching streams by
-      time overlap, so it captures misattribution that WER hides.</p>
+      speaker, which is what sWER is for. But as first computed it charged an
+      unmatched reference stream a capped 1.0 while charging a badly matched one
+      without limit &mdash; so emitting an extra stream cost more than losing a
+      speaker outright. One stray one-word speaker line in a human transcript
+      scored 88.0 on a single visit. Streams are now capped at 1.0 and reference
+      streams under five words are discarded. An earlier version of this page
+      reported a 32-point sWER gap on that basis; the corrected medians are
+      within half a point of each other.</p>
     </div>
     <div class="caveat">
       <h3>Read the median dot, not the mean</h3>
@@ -1031,6 +1141,14 @@ def main() -> int:
         "--partner", default=None,
         help="partner_wer.json from score_partner_wer.py; adds their metric",
     )
+    parser.add_argument(
+        "--mono", default=None,
+        help="results.json for the forced-mono condition; adds the condition section",
+    )
+    parser.add_argument(
+        "--stereo", default=None,
+        help="results.json restricted to the real-stereo subset",
+    )
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
@@ -1038,11 +1156,15 @@ def main() -> int:
     partner_summary = None
     if args.partner:
         partner_summary = merge_partner(data, json.loads(Path(args.partner).read_text()))
+    mono = json.loads(Path(args.mono).read_text()) if args.mono else None
+    stereo = json.loads(Path(args.stereo).read_text()) if args.stereo else None
     font_b64 = ""
     if args.font and Path(args.font).exists():
         font_b64 = base64.b64encode(Path(args.font).read_bytes()).decode()
 
-    Path(args.output).write_text(build_page(data, font_b64, partner_summary))
+    Path(args.output).write_text(
+        build_page(data, font_b64, partner_summary, mono, stereo)
+    )
     print(f"wrote {args.output}")
     return 0
 
