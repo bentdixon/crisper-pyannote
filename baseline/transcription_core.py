@@ -527,7 +527,8 @@ def apply_role_mapping(turns, chunks, mapping):
 def process_interview(audio_path, output_dir, asr_model,
                       work_dir="/tmp/transcription_core_work",
                       file_prefix="", llm_model=None, llm_tokenizer=None,
-                      language="en", token=None, speculative_decoding=True):
+                      language="en", token=None, speculative_decoding=True,
+                      force_mono=False):
     """
     Runs the full pipeline on ONE audio file and writes outputs to
     output_dir:
@@ -538,13 +539,28 @@ def process_interview(audio_path, output_dir, asr_model,
 
     asr_model: an already-loaded CrisperWhisper 2.0 model (from
     load_crisperwhisper()) -- load ONCE in the runner and pass it in here.
+
+    force_mono: ignore the stereo path even on a genuinely separated file and
+    diarize the downmix with pyannote. This is not a production option; it
+    exists so the evaluation can compare diarization models without one side
+    reading speakers off the channels. It also changes the ASR input, because
+    the stereo path transcribes each channel in isolation -- which is the point,
+    the condition being "no channel information anywhere".
     """
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(work_dir, exist_ok=True)
 
     channels = load_audio_and_check_channels(audio_path)
 
-    if len(channels) == 2:
+    if force_mono:
+        downmixed_audio = (
+            AudioSegment.from_file(audio_path).set_frame_rate(SAMPLE_RATE).set_channels(1)
+        )
+        segments = run_pyannote_diarization(audio_path, NUM_SPEAKERS, token=token)
+        source_channels = {spk: downmixed_audio for _, _, spk in segments}
+        diarization_method = "pyannote_forced_mono"
+
+    elif len(channels) == 2:
         left_audio, right_audio = channels[0], channels[1]
 
         left_ranges = get_vad_ranges(left_audio, os.path.join(work_dir, "_vad_left.wav"))

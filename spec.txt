@@ -1,0 +1,23 @@
+[Environment]
+Folder at /data/data/wolfflab/btdixon/Dixon/crisper-whisper-2 on remote cluster
+    1. 4 H200s, CUDA
+We are developing locally - I will commit to Git and pull onto cluster. Ask me to do so when we need to test code. 
+
+[Immediate Steps]
+1. Setup a UV environment with CUDA-enabled Torch and gpu acceleration whenever possible
+2. Setup a system that ingests audio (wav files) and outputs transcripts, at the word level and human-readable. 
+3. Use https://github.com/nyrahealth/CrisperWhisper, the 2.0 version - verbatim style
+    - pip install "crisperwhisper[ct2]" -> the fast version with speculative decoding
+4. Diarize with https://huggingface.co/pyannote/speaker-diarization-community-1 
+    - https://github.com/pyannote/pyannote-audio
+    - Consult https://docs.pyannote.ai/tutorials/diarization-asr-merge and reproduce the code exactly, where possible, to merge the ASR results with the diarization results
+5. Per participant, produce a word-level JSON and a human readable transcript (speaker attributed, according to the algorithm above)
+
+[For Future]
+1. Can community-1 be finetuned? We have human-annotated transcripts in the verbatim style which we can use to do so. 
+2. Can Crisper-Whisper-2 be finetuned? 
+
+[Next Steps]
+1. Make transcripts be formatted as prescribed in https://github.com/bentdixon/labl-utils
+    - ex: S1: 00:00:00.735 Skibby toilet.
+2. Add ability to pick GPU to run on in CLI, and point to a data-dir, which will produce output in an output folder with timestamped runtime and subdirs for each participant found in data-dir

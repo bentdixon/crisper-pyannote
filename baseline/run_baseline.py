@@ -68,6 +68,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device-index", type=int, default=0)
     parser.add_argument("--language", default="en")
     parser.add_argument("--num-speakers", type=int, default=core.NUM_SPEAKERS)
+    parser.add_argument(
+        "--force-mono", action="store_true",
+        help=(
+            "diarize the downmix with pyannote even on genuinely stereo files, "
+            "so the evaluation can compare diarization models without one side "
+            "reading speakers off the channels. Write these to a separate "
+            "--output-dir; they are not production transcripts."
+        ),
+    )
+    parser.add_argument(
+        "--subset", default=None, metavar="FILE",
+        help="file of cohort-relative visit paths, one per line; process only these",
+    )
     parser.add_argument("--hf-token", default=None)
     parser.add_argument(
         "--llm-review", action="store_true",
@@ -82,6 +95,17 @@ def main(argv: list[str] | None = None) -> int:
 
     cohort = Path(args.cohort)
     visits = find_visits(cohort)
+    if args.subset:
+        wanted = {
+            line.strip() for line in Path(args.subset).read_text().splitlines()
+            if line.strip()
+        }
+        visits = [v for v in visits if v.relative_to(cohort).as_posix() in wanted]
+        # An empty match is a stale or mis-rooted list, not a finished run.
+        if not visits:
+            logger.error("--subset %s matched none of the cohort's visits", args.subset)
+            return 1
+        logger.info("Subset: %d of %d listed visit(s) matched", len(visits), len(wanted))
     if not args.redo:
         # Resume: a visit with a transcript already written is done. Lets an
         # interrupted or partially-failed sweep be re-run to pick up the rest.
@@ -139,6 +163,7 @@ def main(argv: list[str] | None = None) -> int:
                 language=args.language,
                 token=args.hf_token,
                 speculative_decoding=args.speculative,
+                force_mono=args.force_mono,
             )
         except Exception:
             failures += 1

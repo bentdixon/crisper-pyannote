@@ -63,6 +63,13 @@ FILLED_PAUSES = {
 }
 BRACKETED = re.compile(r"\[[^\]]*\]")
 
+# A reference "speaker" holding fewer words than this is a transcript formatting
+# artifact, not a participant, and is excluded from sWER and QTP. DER keeps the
+# full reference on purpose: the phantom's turn still occupies real time, and
+# dropping it would punch a hole in a reference whose whole validity rests on
+# tiling the recording (see diarization_spans).
+MIN_REFERENCE_WORDS = 5
+
 
 def normalize(text: str) -> str:
     text = BRACKETED.sub(" ", text).lower()
@@ -251,16 +258,39 @@ def score_visit(turns: list[dict], words: list[dict]) -> dict | None:
 
     pooled = jiwer.process_words(reference_text, hypothesis_text)
 
-    mapping = align_streams(reference, hypothesis)
+    # Phantom reference streams are dropped before matching. Some human
+    # transcripts carry a stray speaker line -- CM05540/day0082_session001 has an
+    # "S2:" turn holding a single word -- and the assignment has no choice but to
+    # match it to something. See the capping note below for what that cost.
+    scored_reference = {
+        k: v for k, v in reference.items()
+        if len(normalize(v["text"]).split()) >= MIN_REFERENCE_WORDS
+    }
+    phantom_streams = len(reference) - len(scored_reference)
+    if not scored_reference:
+        scored_reference = reference
+        phantom_streams = 0
+
+    mapping = align_streams(scored_reference, hypothesis)
     stream_wers = []
+    stream_wers_uncapped = []
     stream_qtps = []
     for speaker, matched in mapping.items():
-        ref_text = normalize(reference[speaker]["text"])
+        ref_text = normalize(scored_reference[speaker]["text"])
         hyp_text = normalize(hypothesis[matched]["text"]) if matched else ""
         if not ref_text:
             continue
         # An unmatched reference stream is a total miss, not a skip.
-        stream_wers.append(jiwer.process_words(ref_text, hyp_text or "*").wer if hyp_text else 1.0)
+        raw = jiwer.process_words(ref_text, hyp_text or "*").wer if hyp_text else 1.0
+        # Capped at 1.0, because the uncapped metric charged a bad match without
+        # bound while charging a total miss exactly 1.0. On the visit above, our
+        # pipeline matched that 1-word reference stream to its 88-word UNKNOWN
+        # bucket and scored 88.0, while a system emitting only two streams left
+        # the same phantom unmatched and paid 1.0 -- a 30x sWER difference that
+        # measured stream count, not speaker attribution. Emitting an extra
+        # stream must not cost more than losing a speaker entirely.
+        stream_wers.append(min(raw, 1.0))
+        stream_wers_uncapped.append(raw)
         stream_qtps.append(qtp_score(ref_text, hyp_text))
 
     # DER on granularity-matched spans (see diarization_spans), reported with
@@ -304,6 +334,11 @@ def score_visit(turns: list[dict], words: list[dict]) -> dict | None:
         # got wrong or missed, unaffected by the verbatim/semi-verbatim gap.
         "wer_no_ins": substitutions + deletions,
         "swer": float(np.mean(stream_wers)) if stream_wers else None,
+        # The superseded uncapped figure, kept the way DER_word_level is, so the
+        # correction stays auditable rather than only living in the commit log.
+        "swer_uncapped": float(np.mean(stream_wers_uncapped)) if stream_wers_uncapped else None,
+        "swer_streams": len(stream_wers),
+        "phantom_streams": phantom_streams,
         "der": der,
         "der_confusion": der_confusion,
         "der_word_level": der_word_level,
@@ -356,18 +391,46 @@ ADAPTERS = {
     "baseline": (make_file_adapter("_words.json"), "_words.json"),
     "baseline_llm": (make_file_adapter("_words_corrected.json"), "_words_corrected.json"),
     "ours_llm": (make_file_adapter("_words_corrected.json"), "_words_corrected.json"),
+    # Same reader as baseline; the mono condition differs only in which output
+    # tree it is pointed at, and it is a separate name so both can be scored in
+    # one run and compared visit by visit.
+    "baseline_mono": (make_file_adapter("_words.json"), "_words.json"),
 }
+
+
+def with_fallback(adapter, roots: list[Path]):
+    """Try each output tree in turn, first hit wins.
+
+    The mono condition only re-ran the visits that had used stereo channels, so
+    baseline_mono is "outputs_mono, else the original outputs". Copying the
+    unchanged visits into a second tree would work too, but then the two trees
+    could silently drift apart.
+    """
+    def adapter_with_fallback(visit: Path, _root: Path | None, relative: Path | None = None):
+        for root in roots:
+            found = adapter(visit, root, relative)
+            if found:
+                return found
+        return None
+    return adapter_with_fallback
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cohort", required=True)
     parser.add_argument(
-        "--system", action="append", required=True, metavar="NAME[=DIR]",
-        help=f"one of {sorted(ADAPTERS)}; all but chirp3 need an output directory",
+        "--system", action="append", required=True, metavar="NAME[=DIR[:DIR...]]",
+        help=(
+            f"one of {sorted(ADAPTERS)}; all but chirp3 need an output directory. "
+            "Several colon-separated directories are tried in order."
+        ),
     )
     parser.add_argument("--output", default=None)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--subset", default=None, metavar="FILE",
+        help="file of cohort-relative visit paths, one per line; score only these",
+    )
     return parser
 
 
@@ -382,13 +445,33 @@ def main(argv: list[str] | None = None) -> int:
         if name not in ADAPTERS:
             logger.error("Unknown system %s; known: %s", name, sorted(ADAPTERS))
             return 1
-        systems.append((name, ADAPTERS[name][0], Path(directory) if directory else None))
+        adapter = ADAPTERS[name][0]
+        roots = [Path(d) for d in directory.split(":") if d] if directory else []
+        if len(roots) > 1:
+            adapter = with_fallback(adapter, roots)
+        systems.append((name, adapter, roots[0] if roots else None))
 
     visits = sorted(
         p for p in cohort.glob("Pronet*/*/*")
         if (p / "human").is_dir() and any((p / "human").glob("*.txt"))
         and any((p / "audio").glob("*.wav"))
     )
+    if args.subset:
+        wanted = {
+            line.strip() for line in Path(args.subset).read_text().splitlines()
+            if line.strip()
+        }
+        visits = [p for p in visits if p.relative_to(cohort).as_posix() in wanted]
+        # A subset that matches nothing means a stale or mis-rooted list; scoring
+        # zero visits would otherwise look like a completed run with no data.
+        if not visits:
+            logger.error("--subset %s matched none of the cohort's visits", args.subset)
+            return 1
+        if len(visits) != len(wanted):
+            logger.warning(
+                "--subset listed %d visit(s), %d matched the cohort",
+                len(wanted), len(visits),
+            )
     if args.limit:
         visits = visits[: args.limit]
     logger.info("Scoring %d system(s) over %d visit(s)", len(systems), len(visits))
@@ -471,6 +554,8 @@ def main(argv: list[str] | None = None) -> int:
             "WER_ins": mean([r.get("wer_ins") for r in results]),
             "WER_no_ins": mean([r.get("wer_no_ins") for r in results]),
             "sWER": mean([r["swer"] for r in results]),
+            "sWER_uncapped": mean([r.get("swer_uncapped") for r in results]),
+            "phantom_streams": sum(r.get("phantom_streams", 0) for r in results),
             "DER": mean([r["der"] for r in results]),
             "DER_confusion": mean([r.get("der_confusion") for r in results]),
             "DER_word_level": mean([r.get("der_word_level") for r in results]),
@@ -493,6 +578,21 @@ def main(argv: list[str] | None = None) -> int:
             f"{show('sWER'):>8} {show('DER'):>8} {show('DER_confusion'):>8} "
             f"{show('QTP_F1'):>8}"
         )
+
+    # Excluded reference streams are reported, never silently dropped: the count
+    # is a property of the human transcripts, so it must be identical across
+    # systems, and a system-specific number would mean the filter is misapplied.
+    phantoms = {n: s.get("phantom_streams", 0) for n, s in aggregate.items()}
+    if any(phantoms.values()):
+        logger.info(
+            "Excluded reference streams under %d words: %s",
+            MIN_REFERENCE_WORDS, phantoms,
+        )
+        if len(set(phantoms.values())) > 1:
+            logger.error(
+                "Phantom counts differ between systems (%s) -- the reference "
+                "filter is supposed to be system-independent", phantoms,
+            )
 
     if args.output:
         Path(args.output).write_text(
