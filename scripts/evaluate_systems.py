@@ -245,7 +245,7 @@ def to_annotation(spans_by_speaker: dict[str, dict]) -> Annotation:
     return annotation
 
 
-def score_visit(turns: list[dict], words: list[dict]) -> dict | None:
+def score_visit(turns: list[dict], words: list[dict], legacy_der: bool = False) -> dict | None:
     reference = reference_streams(turns)
     hypothesis = predicted_streams(words)
     if not reference or not hypothesis:
@@ -307,12 +307,17 @@ def score_visit(turns: list[dict], words: list[dict]) -> dict | None:
         if total:
             der = float(components["diarization error rate"])
             der_confusion = float(components["confusion"] / total)
-        # The old word-span number, kept so the change is auditable.
-        der_word_level = float(
-            DiarizationErrorRate(collar=0.25, skip_overlap=False)(
-                reference_annotation, to_annotation(hypothesis)
+        # The old word-span number, kept so the change is auditable. Off by
+        # default: it scores one segment per word against the reference, which
+        # measured at 0.68s of a 0.72s visit -- 94% of scoring time for a figure
+        # that only exists to document a superseded metric. Pass --legacy-der
+        # when regenerating the report section that tabulates it.
+        if legacy_der:
+            der_word_level = float(
+                DiarizationErrorRate(collar=0.25, skip_overlap=False)(
+                    reference_annotation, to_annotation(hypothesis)
+                )
             )
-        )
 
     # WER split into its three error types, each as a rate over reference words
     # so they sum to WER. This is what makes the column readable here: the ASR
@@ -431,6 +436,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--subset", default=None, metavar="FILE",
         help="file of cohort-relative visit paths, one per line; score only these",
     )
+    parser.add_argument(
+        "--legacy-der", action="store_true",
+        help="also compute the superseded word-span DER (roughly 10x slower)",
+    )
     return parser
 
 
@@ -513,7 +522,7 @@ def main(argv: list[str] | None = None) -> int:
                 if words is None:
                     missing[name] += 1
                 continue
-            result = score_visit(turns, words)
+            result = score_visit(turns, words, legacy_der=args.legacy_der)
             if result is None:
                 continue
             result["visit"] = relative.as_posix()
