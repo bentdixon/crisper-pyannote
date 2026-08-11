@@ -373,7 +373,7 @@ def _pipeline_words(root: Path, relative: Path, pattern: str) -> list[dict] | No
         candidates = sorted(root.glob(f"{relative.as_posix()}/*/{pattern}"))
     if not candidates:
         return None
-    return json.loads(candidates[-1].read_text())["words"]
+    return as_words(json.loads(candidates[-1].read_text()))
 
 
 def make_run_adapter(pattern: str):
@@ -382,12 +382,27 @@ def make_run_adapter(pattern: str):
     return adapter
 
 
+def as_words(payload) -> list[dict] | None:
+    """A word list from either output shape.
+
+    The other team's pipeline writes a bare JSON array; everything this repo
+    writes is an object with a "words" key and metadata beside it. Returning the
+    object unchanged makes the caller iterate its keys, which fails downstream
+    as 'str' has no attribute 'get' -- far from the actual mistake.
+    """
+    if isinstance(payload, dict):
+        return payload.get("words")
+    if isinstance(payload, list):
+        return payload
+    return None
+
+
 def make_file_adapter(suffix: str):
     def adapter(visit: Path, root: Path, relative: Path | None = None):
         found = sorted((root / relative).glob(f"*{suffix}"))
         if not found:
             return None
-        return json.loads(found[-1].read_text())
+        return as_words(json.loads(found[-1].read_text()))
     return adapter
 
 
