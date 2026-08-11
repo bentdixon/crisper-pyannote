@@ -475,6 +475,56 @@ Report generator: `scripts/plot_results.py` renders results.json to a
 self-contained HTML page (DM Sans embedded as a data URI -- the artifact host
 blocks font CDNs, so a linked webfont silently falls back).
 
+### Cross-check with the partner team's WER (2026-08-11)
+
+`scripts/partner_compare.py` is their compareFiles.py vendored unmodified;
+`scripts/score_partner_wer.py` imports its `tokenize`/`replace_fillers`/
+`analyze` and runs them over the same 269 visits and the same adapters as
+`evaluate_systems.py`. Their metric is not ours: difflib `SequenceMatcher`
+(a "replace" block costs `max(ref_len, hyp_len)`, and it maximises the
+matching subsequence rather than minimising edit distance, so it is an upper
+bound on WER), three tiers (raw / punctuation- and case-normalized /
+filler-normalized), and fillers *collapsed to a `[filler]` token on both
+sides* rather than deleted. Results (`outputs/partner_wer.json`):
+
+    system         raw     norm  filler-norm   median  ratio
+    ours         56.44%   43.77%     43.74%    21.87%  1.305
+    ours_llm     56.55%   43.89%     43.86%    21.87%  1.306
+    baseline     58.05%   45.60%     45.56%    23.51%  1.331
+    baseline_llm 58.05%   45.60%     45.56%    23.51%  1.331
+    chirp3       60.33%   47.95%     47.69%    28.87%  1.339
+    verbatimize  60.80%   49.00%     48.82%    30.55%  1.320
+
+**Same ranking as our WER-excluding-insertions, from independent code**: ours
+< baseline < chirp3 < verbatimize, and the LLM review is again never better
+(9 of 269 visits worse for ours, 3 for baseline, rest identical). Per-visit
+Spearman against our WER is 0.70-0.75. The two metrics also agree on word
+ratio (1.30-1.34 here, 1.33-1.36 ours), which is the check that the reference
+text is the same on both sides.
+
+Two things this run added that ours did not show:
+
+- **Mean and median diverge hugely** (ours: 43.7% vs 21.9%). A tail of ~30
+  visits above 100% WER drags every mean. On 21 visits *every* system emits
+  more than 2x the reference words -- those are truncated human transcripts,
+  not ASR failures, and they average 173% WER. Excluding them: ours 32.8%
+  mean / 19.2% median, baseline 34.4 / 19.5, chirp3 36.4 / 25.8. The median
+  is the number to quote.
+- **Chirp-3 wins the easy visits and loses the hard ones.** At p10/p25 it is
+  the best system (4.7% / 8.7% vs ours 9.4% / 11.7%), but its p90 is worst
+  (115% vs 103%). Head-to-head ours beats chirp3 on only 124 of 269 visits
+  and its *median* visit is 1.7 points worse -- ours' aggregate win comes
+  entirely from the failure tail. Against baseline the win is broad instead:
+  ours better on 215 of 269.
+
+Defect found and fixed while writing this: the first reference parser matched
+only the `S1 HH:MM:SS` prefix, but 56k of 69k transcript lines use
+`INTERVIEWER:`/`PARTICIPANT:`. Speaker tags and timestamp digits survived into
+the reference on most files, inflating every system's WER by ~7 points and
+depressing the word ratio to 1.13. `reference_prose` now reuses
+prepare_data's `TIMESTAMPED_LINE`, whose speaker field is a bare `(\S+)`.
+The word-ratio agreement with our metric is what caught it.
+
 ## Open questions / future (spec section "For Future")
 
 - Fine-tuning CrisperWhisper 2.0: not yet investigated; the ct2 backend is
