@@ -227,6 +227,18 @@ def main(argv: list[str] | None = None) -> int:
                         break
                 exposed.append((start, end, surface))
 
+            # The same question over human-marked spans only. Those are
+            # verified PII, so this is the lower bound; the leave-one-out union
+            # above includes other systems' false positives and is the upper
+            # bound. Quoting one without the other overstates the certainty.
+            gold_merged = merge_ranges(gold_ranges)
+            gold_exposed = sum(
+                1 for start, end in gold_merged
+                if not any(s2 < end and e2 > start for s2, e2 in placed[name])
+            )
+            totals[name]["gold_locations"] += len(gold_merged)
+            totals[name]["gold_exposed"] += gold_exposed
+
             totals[name]["locations"] += len(locations)
             totals[name]["exposed"] += len(exposed)
             scored_transcripts[name] += 1
@@ -237,6 +249,8 @@ def main(argv: list[str] | None = None) -> int:
                 "locations": len(locations),
                 "exposed": len(exposed),
                 "exposed_rate": len(exposed) / len(locations),
+                "gold_locations": len(gold_merged),
+                "gold_exposed": gold_exposed,
             }
             if args.csv:
                 rows.append({
@@ -265,18 +279,29 @@ def main(argv: list[str] | None = None) -> int:
             "exposed_rate": counter["exposed"] / (counter["locations"] or 1),
             "clean_transcripts": clean_transcripts[name],
             "clean_transcript_rate": clean_transcripts[name] / scored,
+            "gold_locations": counter["gold_locations"],
+            "gold_exposed": counter["gold_exposed"],
+            "gold_exposed_rate": (
+                counter["gold_exposed"] / counter["gold_locations"]
+                if counter["gold_locations"] else None
+            ),
         }
 
     width = max((len(n) for n in aggregate), default=10)
     print(
-        f"\n{'system':{width}}  transcripts  locations  exposed  exposed%  "
+        f"\n{'system':{width}}  transcripts   gold-exposed   union-exposed  "
         f"fully clean"
     )
     for name, s in sorted(aggregate.items(), key=lambda kv: kv[1]["exposed_rate"]):
+        gold = (
+            f"{s['gold_exposed']}/{s['gold_locations']} "
+            f"{s['gold_exposed_rate'] * 100:.0f}%"
+            if s["gold_exposed_rate"] is not None else "-"
+        )
         print(
-            f"{name:{width}}  {s['transcripts']:11d}  {s['pii_locations']:9d}  "
-            f"{s['exposed']:7d}  {s['exposed_rate'] * 100:7.1f}%  "
-            f"{s['clean_transcripts']:3d} of {s['transcripts']} "
+            f"{name:{width}}  {s['transcripts']:11d}  {gold:>14}  "
+            f"{s['exposed']}/{s['pii_locations']} {s['exposed_rate'] * 100:.0f}%".ljust(16)
+            + f"  {s['clean_transcripts']:3d} of {s['transcripts']} "
             f"({s['clean_transcript_rate'] * 100:.0f}%)"
         )
 
