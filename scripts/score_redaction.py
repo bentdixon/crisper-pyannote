@@ -51,6 +51,15 @@ REDACTION_ADAPTERS = dict(ADAPTERS)
 REDACTION_ADAPTERS.update({
     "ours_redacted": (make_run_adapter("transcript_redacted.json"), "transcript_redacted.json"),
     "baseline_redacted": (make_file_adapter("_words_redacted.json"), "_words_redacted.json"),
+    # redact_llm.py --mode turn, written alongside the chunk-mode output with
+    # its own suffix so the two protocols can be scored against each other on
+    # the same transcripts rather than one replacing the other.
+    "ours_redacted_turn": (
+        make_run_adapter("transcript_redacted_turn.json"), "transcript_redacted_turn.json",
+    ),
+    "baseline_redacted_turn": (
+        make_file_adapter("_words_redacted_turn.json"), "_words_redacted_turn.json",
+    ),
 })
 
 

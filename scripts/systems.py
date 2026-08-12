@@ -50,6 +50,13 @@ SYSTEMS: list[tuple[str, list[str], str, str]] = [
         "community-1 pipeline, PII redacted in windows",
     ),
     (
+        "ours_redacted_turn",
+        ["CrisperWhisper 2.0 ASR", "pyannote community-1",
+         "Gemma 4 31B redaction (turn rewrite)"],
+        "#8f7be0",
+        "community-1 pipeline, PII redacted one speaker turn at a time",
+    ),
+    (
         "baseline",
         ["CrisperWhisper 2.0 ASR", "pyannote 3.1"],
         "#eda100",
@@ -72,6 +79,13 @@ SYSTEMS: list[tuple[str, list[str], str, str]] = [
         ["CrisperWhisper 2.0 ASR", "pyannote 3.1", "Gemma 4 31B redaction"],
         "#9a8ae8",
         "pyannote 3.1 pipeline, PII redacted in windows",
+    ),
+    (
+        "baseline_redacted_turn",
+        ["CrisperWhisper 2.0 ASR", "pyannote 3.1",
+         "Gemma 4 31B redaction (turn rewrite)"],
+        "#c2b6f2",
+        "pyannote 3.1 pipeline, PII redacted one speaker turn at a time",
     ),
 ]
 
