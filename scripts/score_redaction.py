@@ -73,6 +73,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument(
+        "--subset", default=None, metavar="FILE",
+        help="file of cohort-relative visit paths, one per line; score only these",
+    )
+    parser.add_argument(
         "--leaks-csv", default=None, metavar="FILE",
         help=(
             "write one row per gold span that leaked, for inspection. WARNING: "
@@ -113,6 +117,22 @@ def main(argv: list[str] | None = None) -> int:
         if (p / "human").is_dir() and any((p / "human").glob("*.txt"))
         and any((p / "audio").glob("*.wav"))
     )
+    if args.subset:
+        wanted = {
+            line.strip() for line in Path(args.subset).read_text().splitlines()
+            if line.strip()
+        }
+        visits = [p for p in visits if p.relative_to(cohort).as_posix() in wanted]
+        # Scoring zero visits would otherwise look like a completed run with no
+        # PII in it, which is the failure this whole module is built to avoid.
+        if not visits:
+            logger.error("--subset %s matched none of the cohort's visits", args.subset)
+            return 1
+        if len(visits) != len(wanted):
+            logger.warning(
+                "--subset listed %d visit(s), %d matched the cohort",
+                len(wanted), len(visits),
+            )
     if args.limit:
         visits = visits[: args.limit]
 
