@@ -172,6 +172,59 @@ Turn:
 {turn}
 """
 
+# Every call after the first repeats only this, because the instructions above
+# are already in the conversation.
+TURN_FOLLOWUP = """Turn:
+{turn}
+"""
+
+# Worked examples, sent as real conversation turns rather than quoted inside the
+# instructions: the format is then demonstrated by the assistant's own reply, so
+# a demonstration cannot contradict the "no quotation marks, no preamble" rule
+# the way a quoted example does, and the model has seen the exact shape of a
+# valid response before it writes one.
+#
+# Each pair is chosen to settle several decisions at once, because every example
+# is re-encoded on every call -- there is no prefix cache across generate()
+# calls, and turn mode makes one call per turn. Two dense examples cost less and
+# teach more than six thin ones.
+#
+# Between them these cover: disfluencies and stuttered repetitions kept; city
+# and state labelled separately; a month as DATE but "last week" left alone; a
+# street as LOCATION but "the store" left alone; a spelled-out age; an existing
+# [PERSON_NAME] passed through untouched; a turn with nothing to redact returned
+# character-for-character, which is the case a model is most tempted to "help"
+# with. The text is synthetic, written to look like this corpus's verbatim ASR
+# output rather than clean prose.
+EXAMPLES: list[tuple[str, str]] = [
+    (
+        "Yeah, so, um, I I moved back to Boston, Massachusetts in March, and my "
+        "sister Rachel, she's twenty three, she was still living at the old place "
+        "on Commonwealth Ave. I saw her again last week at the store.",
+        "Yeah, so, um, I I moved back to [LOCATION], [US_STATE] in [DATE], and my "
+        "sister [PERSON_NAME], she's [AGE], she was still living at the old place "
+        "on [LOCATION]. I saw her again last week at the store.",
+    ),
+    (
+        "[UM] I don't know, it just felt like, like everyone was watching me? And "
+        "then [PERSON_NAME] said I should maybe talk to somebody about it.",
+        "[UM] I don't know, it just felt like, like everyone was watching me? And "
+        "then [PERSON_NAME] said I should maybe talk to somebody about it.",
+    ),
+]
+
+
+def build_messages(turn: str) -> list[dict]:
+    """Instructions, the worked examples as turns, then the real turn."""
+    messages: list[dict] = []
+    for index, (given, wanted) in enumerate(EXAMPLES):
+        template = TURN_PROMPT if index == 0 else TURN_FOLLOWUP
+        messages.append({"role": "user", "content": template.format(turn=given)})
+        messages.append({"role": "assistant", "content": wanted})
+    template = TURN_PROMPT if not EXAMPLES else TURN_FOLLOWUP
+    messages.append({"role": "user", "content": template.format(turn=turn)})
+    return messages
+
 
 def load_model(model_id: str = MODEL_ID, device: str | None = None):
     import torch
@@ -416,7 +469,10 @@ def align_rewrite(words: list[dict], span: tuple[int, int], reply: str,
         # matcher can never pair "[DATE]" with the word it replaced.
         return f"\x00{found.group(1)}" if found else normalize(token)
 
-    left = [normalize(t) for t in source]
+    # Both sides go through `key`, so a placeholder the transcript already
+    # carried matches itself and is left alone rather than being counted as a
+    # fresh redaction of the word "[PERSON_NAME]".
+    left = [key(t) for t in source]
     right = [key(t) for t in output]
     matcher = difflib.SequenceMatcher(None, left, right, autojunk=False)
 
@@ -467,16 +523,17 @@ def redact_turn(model, tokenizer, words: list[dict], span: tuple[int, int],
     import torch
 
     turn = sentence_text(words, span)
-    prompt = TURN_PROMPT.format(turn=turn)
-    messages = [{"role": "user", "content": prompt}]
+    messages = build_messages(turn)
     text = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True,
     )
     inputs = tokenizer(text, return_tensors="pt").to(model.device)
-    # The reply is the turn again, so the budget scales with the turn rather
-    # than being a flat cap: a truncated reply looks exactly like a paraphrase
-    # to the aligner and would throw the turn away.
-    budget = int(inputs["input_ids"].shape[1] * 0.6) + 128
+    # The reply is the turn again, so the budget scales with the turn itself --
+    # not with the prompt, which now carries the instructions and both worked
+    # examples and would make the budget grow with material the model is not
+    # asked to reproduce. A truncated reply looks exactly like a paraphrase to
+    # the aligner and would throw the turn away, hence the generous multiple.
+    budget = int(len(tokenizer(turn)["input_ids"]) * 1.5) + 64
     with torch.no_grad():
         generated = model.generate(
             **inputs, max_new_tokens=budget, do_sample=False,
