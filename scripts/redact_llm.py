@@ -673,6 +673,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default=MODEL_ID)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--only", action="append", default=None, metavar="SUBSTRING",
+        help=(
+            "keep only files whose path contains this (repeatable). For pilots "
+            "on named visits, where --limit would just take the first N"
+        ),
+    )
     parser.add_argument("--shard", default=None, metavar="I/N")
     parser.add_argument(
         "--redo", action="store_true", help="re-redact files that already have output",
@@ -689,6 +696,9 @@ def main(argv: list[str] | None = None) -> int:
     if not files:
         logger.error("No %s under %s", args.pattern, root)
         return 1
+    if args.only:
+        files = [f for f in files if any(part in str(f) for part in args.only)]
+        logger.info("Filtered to %d file(s) by --only", len(files))
     if not args.redo:
         files = [f for f in files if not destination_for(f, args.suffix).exists()]
     if args.shard:
