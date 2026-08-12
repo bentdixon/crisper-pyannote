@@ -88,11 +88,23 @@ PARTNER_METRIC = (
 )
 
 
+# A third WER implementation, added the same way: jiwer with square-bracket
+# content and punctuation stripped. It is the standard edit distance, unlike the
+# partner metric's difflib upper bound, so it lands between ours and theirs.
+JIWER_METRIC = (
+    "jiwer WER", "jiwer_wer", "JiwerWER", "lower is better",
+    "a third WER implementation -- jiwer, brackets and punctuation stripped -- "
+    "run unmodified over the same visits",
+)
+
+
 def metrics_for(aggregate: dict) -> list[tuple[str, str, str, str, str]]:
-    """METRICS, plus the partner metric when any system carries it."""
-    if any(entry.get(PARTNER_METRIC[2]) is not None for entry in aggregate.values()):
-        return METRICS + [PARTNER_METRIC]
-    return METRICS
+    """METRICS, plus each optional metric any system carries."""
+    metrics = list(METRICS)
+    for metric in (PARTNER_METRIC, JIWER_METRIC):
+        if any(entry.get(metric[2]) is not None for entry in aggregate.values()):
+            metrics.append(metric)
+    return metrics
 
 # Full figure captions, keyed by aggregate key. These travel with the exported
 # charts, so each one has to stand on its own: what the metric is, how it is
@@ -163,6 +175,18 @@ CAPTIONS = {
         "makes it worth showing. Note the unusually wide gap between the median dot and "
         "the mean marker: a tail of visits whose human transcript covers only part of "
         "the session scores above 100% and carries every mean on this chart."
+    ),
+    "JiwerWER": (
+        "A third WER implementation, supplied by the study team and vendored unmodified: "
+        "jiwer's edit distance after everything inside square brackets is deleted, all "
+        "punctuation is stripped and both sides are lowercased. It is the standard "
+        "minimum-edit-distance WER, so it reads below the partner team's difflib upper "
+        "bound and close to ours, over the same covered spans and the same outputs. "
+        "One asymmetry to know about: deleting bracketed content removes every "
+        "CrisperWhisper filled pause, written [UM] and [UH], while Chirp-3's plain \"um\" "
+        "survives, so the CrisperWhisper arms are charged deletions their transcripts "
+        "did not earn. Removing filled pauses from both sides for every system widens "
+        "their lead rather than narrowing it."
     ),
     "composition": (
         "The three error types that sum to WER, each as a rate over reference words. "
@@ -337,6 +361,39 @@ def merge_partner(data: dict, partner: dict) -> dict:
             "median": entry["filler_normalized_median"],
             "clean_mean": statistics.fmean(clean) if clean else None,
             "clean_median": statistics.median(clean) if clean else None,
+        }
+    return summary
+
+
+def merge_jiwer(data: dict, jiwer_data: dict) -> dict:
+    """Fold jiwer_wer.json into data's shape and summarise it.
+
+    The per-visit key is `jiwer_wer`, not `wer`: our own per-visit WER already
+    occupies `wer`, and overwriting it would silently redraw the headline chart
+    with another implementation's numbers.
+    """
+    aggregate, per_visit = data.setdefault("aggregate", {}), data.setdefault("per_visit", {})
+    j_agg, j_visit = jiwer_data.get("aggregate", {}), jiwer_data.get("per_visit", {})
+
+    for name, entry in j_agg.items():
+        if name in aggregate:
+            aggregate[name]["JiwerWER"] = entry["wer_micro"]
+    for visit, systems in j_visit.items():
+        for name, entry in systems.items():
+            target = per_visit.setdefault(visit, {}).setdefault(name, {})
+            target["jiwer_wer"] = entry["wer"]
+
+    summary = {"total": len(j_visit), "systems": {}}
+    for name, entry in j_agg.items():
+        summary["systems"][name] = {
+            "pooled": entry["wer_micro"],
+            "mean": entry["wer"],
+            "median": entry["wer_median"],
+            "sub": entry["substitutions_rate"],
+            "delete": entry["deletions_rate"],
+            "insert": entry["insertions_rate"],
+            "no_fillers": entry["wer_micro_filler_symmetric"],
+            "ratio": entry["word_ratio"],
         }
     return summary
 
@@ -1279,6 +1336,71 @@ def conditions_section(mono: dict | None, stereo: dict | None) -> str:
 </section>"""
 
 
+def jiwer_section(summary: dict) -> str:
+    """The third WER implementation, and the filler asymmetry it carries."""
+    if not summary or not summary["systems"]:
+        return ""
+    rows = []
+    for name, label_parts, colour, _ in SYSTEMS:
+        stats = summary["systems"].get(name)
+        if not stats:
+            continue
+        rows.append(
+            f'<tr><td class="sys"><span class="swatch" style="background:{colour}"></span>'
+            f'{escape(" + ".join(label_parts))}</td>'
+            f'<td class="num">{stats["pooled"] * 100:.1f}%</td>'
+            f'<td class="num">{stats["mean"] * 100:.1f}%</td>'
+            f'<td class="num">{stats["median"] * 100:.1f}%</td>'
+            f'<td class="num sub">{stats["sub"] * 100:.1f}%</td>'
+            f'<td class="num sub">{stats["delete"] * 100:.1f}%</td>'
+            f'<td class="num sub">{stats["insert"] * 100:.1f}%</td>'
+            f'<td class="num">{stats["no_fillers"] * 100:.1f}%</td></tr>'
+        )
+    return f"""
+<section>
+  <h2>Cross-check: the study team's jiwer WER</h2>
+  <p class="prose">A third WER implementation, supplied by the study team and vendored
+  unmodified: jiwer's edit distance after everything inside square brackets is deleted,
+  all punctuation is stripped and both sides are lowercased. It ran over the same
+  {summary["total"]} visits, the same system outputs and the same covered spans as
+  every other number on this page. Being a true minimum edit distance, it sits below
+  the partner team's difflib upper bound; it reproduces the same ordering as both other
+  metrics, which is now three independent implementations agreeing.</p>
+  <div class="tablewrap">
+  <table>
+    <thead>
+      <tr><th></th><th colspan="3">WER</th><th colspan="3">Error composition</th>
+          <th>Fillers dropped<br>both sides</th></tr>
+      <tr><th>System</th><th>Pooled</th><th>Mean visit</th><th>Median visit</th>
+          <th>Sub</th><th>Del</th><th>Ins</th><th>Pooled</th></tr>
+    </thead>
+    <tbody>{"".join(rows)}</tbody>
+  </table>
+  </div>
+  <div class="caveats" style="margin-top:26px">
+    <div class="caveat">
+      <h3>Deleting brackets is not neutral across systems</h3>
+      <p>The rule removes the human transcripts' [inaudible] markup, which is the intent,
+      but it also removes every CrisperWhisper filled pause &mdash; those are written
+      [UM] and [UH] &mdash; while Chirp-3 writes "um" as a plain word that survives. The
+      CrisperWhisper arms are therefore charged deletions for disfluencies they did
+      transcribe. The last column removes filled pauses from both sides for every system
+      alike, and the CrisperWhisper lead widens rather than narrows, so the asymmetry was
+      working against the systems that win.</p>
+    </div>
+    <div class="caveat">
+      <h3>Pooled, not averaged</h3>
+      <p>The headline column pools errors and reference words across the corpus rather
+      than averaging per-visit rates, so a two-hour session counts for more than a
+      five-minute one. Mean and median are shown beside it; they sit close together here
+      because the coverage window already removed the truncated-reference tail that
+      distorts the partner metric's mean.</p>
+    </div>
+  </div>
+</section>
+"""
+
+
 def partner_section(summary: dict) -> str:
     """The cross-check: their numbers, and the two things they added."""
     if not summary or not summary["systems"]:
@@ -1693,6 +1815,7 @@ def build_page(
     data: dict,
     font_b64: str,
     partner_summary: dict | None = None,
+    jiwer_summary: dict | None = None,
     mono: dict | None = None,
     stereo: dict | None = None,
     redaction_data: dict | None = None,
@@ -1977,6 +2100,7 @@ footer {{ margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--grid)
 {conditions_section(mono, stereo)}
 {redaction_panel(redaction_data, leaks, exposure)}
 {partner_section(partner_summary or {})}
+{jiwer_section(jiwer_summary or {})}
 <section>
   <h2>Reading these numbers</h2>
   <div class="caveats">
@@ -2031,6 +2155,10 @@ def main() -> int:
         help="partner_wer.json from score_partner_wer.py; adds their metric",
     )
     parser.add_argument(
+        "--jiwer", default=None,
+        help="jiwer_wer.json from score_jiwer_wer.py; adds the third WER metric",
+    )
+    parser.add_argument(
         "--mono", default=None,
         help="results.json for the forced-mono condition; adds the condition section",
     )
@@ -2061,6 +2189,9 @@ def main() -> int:
     partner_summary = None
     if args.partner:
         partner_summary = merge_partner(data, load_results(args.partner))
+    jiwer_summary = None
+    if args.jiwer:
+        jiwer_summary = merge_jiwer(data, load_results(args.jiwer))
     mono = load_results(args.mono)
     stereo = load_results(args.stereo)
     redaction_data = load_results(args.redaction)
@@ -2073,8 +2204,8 @@ def main() -> int:
 
     Path(args.output).write_text(
         build_page(
-            data, font_b64, partner_summary, mono, stereo, redaction_data,
-            taxonomy, leaks, exposure,
+            data, font_b64, partner_summary, jiwer_summary, mono, stereo,
+            redaction_data, taxonomy, leaks, exposure,
         )
     )
     print(f"wrote {args.output}")

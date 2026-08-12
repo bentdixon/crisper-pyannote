@@ -40,6 +40,7 @@ from plot_results import (  # noqa: E402
     composition_svg,
     escape,
     load_results,
+    merge_jiwer,
     merge_partner,
     metrics_for,
     quartiles,
@@ -338,6 +339,10 @@ def main() -> int:
         "--partner", default=None,
         help="partner_wer.json from score_partner_wer.py; adds their chart",
     )
+    parser.add_argument(
+        "--jiwer", default=None,
+        help="jiwer_wer.json from score_jiwer_wer.py; adds the third WER chart",
+    )
     parser.add_argument("--mono", default=None, help="results.json for the mono subset")
     parser.add_argument("--stereo", default=None, help="results.json for the stereo subset")
     parser.add_argument("--redaction", default=None, help="redaction.json")
@@ -360,6 +365,8 @@ def main() -> int:
     data = load_results(args.results)
     if args.partner:
         merge_partner(data, load_results(args.partner))
+    if args.jiwer:
+        merge_jiwer(data, load_results(args.jiwer))
     mono = load_results(args.mono)
     stereo = load_results(args.stereo)
     redaction = load_results(args.redaction)
