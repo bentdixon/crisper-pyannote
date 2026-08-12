@@ -517,63 +517,202 @@ def align_rewrite(words: list[dict], span: tuple[int, int], reply: str,
     return out, unmatched
 
 
-def redact_turn(model, tokenizer, words: list[dict], span: tuple[int, int],
-                ) -> tuple[dict[int, str], str | None, int]:
-    """Redactions for one turn, as {absolute word index: label}."""
+def turn_budget(tokenizer, turn: str) -> int:
+    """Generation budget for one turn.
+
+    The reply is the turn again, so this scales with the turn itself -- not with
+    the prompt, which carries the instructions and both worked examples and
+    would make the budget grow with material the model is not asked to
+    reproduce. A truncated reply looks exactly like a paraphrase to the aligner
+    and would throw the turn away, hence the generous multiple.
+    """
+    return int(len(tokenizer(turn)["input_ids"]) * 1.5) + 64
+
+
+def shared_prefix(tokenizer) -> str:
+    """The part of every turn-mode prompt that never changes.
+
+    build_messages puts the instructions and both worked examples ahead of the
+    real turn, and that block is byte-identical on every call. Rendering the
+    conversation twice -- once with a sentinel turn, once without -- and taking
+    the common head is how the boundary is found without duplicating the chat
+    template's formatting rules here, which differ per model family.
+    """
+    sentinel = "\x01SENTINEL\x01"
+    full = tokenizer.apply_chat_template(
+        build_messages(sentinel), tokenize=False, add_generation_prompt=True,
+    )
+    head, _, _ = full.partition(sentinel)
+    return head
+
+
+class PrefixCache:
+    """KV cache for the shared prompt prefix, prefilled once and reused.
+
+    Every call re-encoded the instructions and both examples -- several hundred
+    tokens of identical text, on top of a turn averaging twenty. Prefilling that
+    once and cropping the reused copy back to the prefix after each batch turns
+    the per-call prefill into a per-run cost.
+
+    Correctness rests on the prefix being a true prefix of every prompt in token
+    space, which `verify` asserts on the first batch rather than trusting.
+    """
+
+    def __init__(self, model, tokenizer):
+        import torch
+
+        self.text = shared_prefix(tokenizer)
+        self.ids = tokenizer(self.text, return_tensors="pt").to(model.device)
+        self.length = self.ids["input_ids"].shape[1]
+        with torch.no_grad():
+            self.past = model(**self.ids, use_cache=True).past_key_values
+        logger.info("Prefix cache: %d shared token(s) per call", self.length)
+
+        self.id_list = self.ids["input_ids"][0].tolist()
+
+    def covers(self, rows: list[list[int]]) -> bool:
+        """True when every prompt in the batch really begins with the prefix.
+
+        Tokenizers can merge across a string boundary, so the head of the
+        rendered prompt is not guaranteed to tokenize the same way alone. This
+        is checked rather than assumed; a mismatch falls back to plain batching
+        instead of silently attending to the wrong keys.
+        """
+        return all(row[: self.length] == self.id_list for row in rows)
+
+    def expanded(self, batch: int):
+        """A private copy of the prefill, widened to the batch size.
+
+        generate() extends whatever cache it is given, so the stored prefill
+        must never be handed over directly -- the second batch would attend to
+        the first batch's turn.
+        """
+        import copy
+
+        past = copy.deepcopy(self.past)
+        if batch > 1:
+            past.batch_repeat_interleave(batch)
+        return past
+
+
+def generate_replies(model, tokenizer, turns: list[str], prefix=None) -> list[str]:
+    """Rewrites for a batch of turns, in the order given.
+
+    Batched because the cost here is per call, not per word: in the batch-1
+    pilot, turns varying twofold in length all took 1.6-2.6 s, so the fixed
+    prompt prefill and generate() overhead dominated the decode. Padding is on
+    the left, which is what a decoder-only model needs for the last position of
+    every row to be a real token.
+    """
     import torch
 
-    turn = sentence_text(words, span)
-    messages = build_messages(turn)
-    text = tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True,
-    )
-    inputs = tokenizer(text, return_tensors="pt").to(model.device)
-    # The reply is the turn again, so the budget scales with the turn itself --
-    # not with the prompt, which now carries the instructions and both worked
-    # examples and would make the budget grow with material the model is not
-    # asked to reproduce. A truncated reply looks exactly like a paraphrase to
-    # the aligner and would throw the turn away, hence the generous multiple.
-    budget = int(len(tokenizer(turn)["input_ids"]) * 1.5) + 64
-    with torch.no_grad():
-        generated = model.generate(
-            **inputs, max_new_tokens=budget, do_sample=False,
-            pad_token_id=tokenizer.eos_token_id,
+    texts = [
+        tokenizer.apply_chat_template(
+            build_messages(turn), tokenize=False, add_generation_prompt=True,
         )
-    reply = tokenizer.decode(
-        generated[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True,
-    ).strip()
+        for turn in turns
+    ]
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    # One budget for the whole batch, so batches are formed from turns of
+    # similar length -- otherwise the longest turn pays for everyone.
+    budget = max(turn_budget(tokenizer, turn) for turn in turns)
+
+    rows = [tokenizer(text)["input_ids"] for text in texts] if prefix else None
+    if prefix and prefix.covers(rows):
+        # Only the part after the shared prefix is fed in; the prefix comes from
+        # the cache. Padding sits between the two so the prefix stays a true
+        # token prefix of every row -- left-padding the whole prompt would put
+        # pad tokens in front of it and break the cache alignment. Positions are
+        # derived from the attention mask, so the pad gap costs nothing.
+        pad = tokenizer.pad_token_id
+        suffixes = [row[prefix.length:] for row in rows]
+        width = max(len(suffix) for suffix in suffixes)
+        ids = torch.tensor(
+            [[pad] * (width - len(s)) + s for s in suffixes], device=model.device,
+        )
+        mask = torch.tensor(
+            [[1] * prefix.length + [0] * (width - len(s)) + [1] * len(s)
+             for s in suffixes],
+            device=model.device,
+        )
+        with torch.no_grad():
+            generated = model.generate(
+                input_ids=ids, attention_mask=mask,
+                past_key_values=prefix.expanded(len(texts)),
+                max_new_tokens=budget, do_sample=False, pad_token_id=pad,
+            )
+    else:
+        if prefix:
+            logger.warning(
+                "Prefix cache does not tokenize as a prefix of the prompt; "
+                "falling back to full prompts for this batch",
+            )
+        tokenizer.padding_side = "left"
+        inputs = tokenizer(texts, return_tensors="pt", padding=True).to(model.device)
+        width = inputs["input_ids"].shape[1]
+        with torch.no_grad():
+            generated = model.generate(
+                **inputs, max_new_tokens=budget, do_sample=False,
+                pad_token_id=tokenizer.pad_token_id,
+            )
+    return [
+        tokenizer.decode(row[width:], skip_special_tokens=True).strip()
+        for row in generated
+    ]
+
+
+def interpret_reply(words: list[dict], span: tuple[int, int], reply: str,
+                    ) -> tuple[dict[int, str], str | None, int]:
+    """Turn one rewrite into redactions, or a reason it cannot be used."""
     fence = re.search(r"```(?:\w+)?\s*(.*?)```", reply, re.S)
     if fence:
         reply = fence.group(1).strip()
     if not reply:
         return {}, "empty reply", 0
-
     found, unmatched = align_rewrite(words, span, reply)
     if found is None:
         return {}, "reply is not a verbatim copy of the turn", 0
     return found, None, unmatched
 
 
-def redact_words_by_turn(model, tokenizer, words: list[dict]) -> tuple[dict[int, str], dict]:
+def redact_words_by_turn(model, tokenizer, words: list[dict], batch_size: int = 1,
+                         prefix=None) -> tuple[dict[int, str], dict]:
     """One call per speaker turn. Returns redactions and the per-file report."""
     turns = group_turns(words)
     redactions: dict[int, str] = {}
     failures = 0
     unmatched = 0
-    for number, span in enumerate(turns, start=1):
+
+    # Batches are built from turns of similar length so padding and the shared
+    # generation budget stay tight; results are keyed by the turn's original
+    # index, so the transcript order is unaffected by how they were grouped.
+    order = sorted(range(len(turns)), key=lambda i: turns[i][1] - turns[i][0])
+    batches = [order[i:i + batch_size] for i in range(0, len(order), batch_size)]
+
+    for batch in batches:
+        texts = [sentence_text(words, turns[i]) for i in batch]
         try:
-            found, reason, missed = redact_turn(model, tokenizer, words, span)
+            replies = generate_replies(model, tokenizer, texts, prefix)
         except Exception as error:
-            found, reason, missed = {}, f"{type(error).__name__}: {error}", 0
-        unmatched += missed
-        if reason:
-            failures += 1
-            logger.warning(
-                "  turn %d/%d unusable (%s); its words are kept unredacted",
-                number, len(turns), reason,
-            )
-            continue
-        redactions.update(found)
+            replies = None
+            reason = f"{type(error).__name__}: {error}"
+        for position, index in enumerate(batch):
+            if replies is None:
+                found, missed = {}, 0
+            else:
+                found, reason, missed = interpret_reply(
+                    words, turns[index], replies[position],
+                )
+            unmatched += missed
+            if reason:
+                failures += 1
+                logger.warning(
+                    "  turn %d/%d unusable (%s); its words are kept unredacted",
+                    index + 1, len(turns), reason,
+                )
+                continue
+            redactions.update(found)
     return redactions, {
         "mode": "turn",
         "turns": len(turns),
@@ -604,10 +743,12 @@ def apply_labels(words: list[dict], redactions: dict[int, str]) -> list[dict]:
 
 
 def redact_words(model, tokenizer, words: list[dict], mode: str = "chunk",
-                 ) -> tuple[list[dict], dict]:
+                 batch_size: int = 1, prefix=None) -> tuple[list[dict], dict]:
     """Apply redaction in the requested mode, returning words and a report."""
     if mode == "turn":
-        redactions, report = redact_words_by_turn(model, tokenizer, words)
+        redactions, report = redact_words_by_turn(
+            model, tokenizer, words, batch_size, prefix,
+        )
         return apply_labels(words, redactions), report
 
     sentences = split_sentences(words)
@@ -670,6 +811,20 @@ def build_parser() -> argparse.ArgumentParser:
             "[LABEL] inline. Give turn mode its own --suffix so both survive"
         ),
     )
+    parser.add_argument(
+        "--batch-size", type=int, default=1, metavar="N",
+        help=(
+            "turn mode only: rewrite N turns per generate() call. The cost is "
+            "per call rather than per word, so this is the main speed knob"
+        ),
+    )
+    parser.add_argument(
+        "--prefix-cache", action="store_true",
+        help=(
+            "turn mode only: prefill the shared instructions and examples once "
+            "and reuse the KV cache for every call"
+        ),
+    )
     parser.add_argument("--model", default=MODEL_ID)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--limit", type=int, default=None)
@@ -712,13 +867,22 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     model, tokenizer = load_model(args.model, args.device)
+    # Prefilled once for the whole run: in turn mode the instructions and both
+    # worked examples are several hundred tokens of identical text in front of a
+    # turn averaging twenty.
+    prefix = (
+        PrefixCache(model, tokenizer)
+        if args.mode == "turn" and args.prefix_cache else None
+    )
 
     total_failures = 0
     for index, path in enumerate(files, start=1):
         started = time.perf_counter()
         payload = json.loads(path.read_text())
         words = payload["words"] if isinstance(payload, dict) else payload
-        redacted, report = redact_words(model, tokenizer, words, args.mode)
+        redacted, report = redact_words(
+            model, tokenizer, words, args.mode, args.batch_size, prefix,
+        )
         total_failures += report["chunk_failures"]
 
         destination = destination_for(path, args.suffix)
