@@ -377,7 +377,10 @@ def merge_jiwer(data: dict, jiwer_data: dict) -> dict:
 
     for name, entry in j_agg.items():
         if name in aggregate:
-            aggregate[name]["JiwerWER"] = entry["wer_micro"]
+            # The mean of the per-visit rates, matching how every other metric
+            # on this page aggregates -- the chart's hollow marker is labelled
+            # "mean" in the legend. The pooled rate is in the section table.
+            aggregate[name]["JiwerWER"] = entry["wer"]
     for visit, systems in j_visit.items():
         for name, entry in systems.items():
             target = per_visit.setdefault(visit, {}).setdefault(name, {})

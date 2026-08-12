@@ -62,6 +62,19 @@ PARTNER_COLUMNS = [
 ]
 
 
+JIWER_COLUMNS = [
+    ("Visits", "visits", "int"),
+    ("WER pooled", "wer_micro", "pct"),
+    ("WER mean visit", "wer", "pct"),
+    ("WER median visit", "wer_median", "pct"),
+    ("Substitutions", "substitutions_rate", "pct"),
+    ("Deletions", "deletions_rate", "pct"),
+    ("Insertions", "insertions_rate", "pct"),
+    ("WER pooled, fillers dropped both sides", "wer_micro_filler_symmetric", "pct"),
+    ("Words per reference word", "word_ratio", "ratio"),
+]
+
+
 def render(value, kind: str) -> str:
     if value is None:
         return ""
@@ -107,6 +120,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--taxonomy", default=None)
     parser.add_argument("--redaction", default=None)
     parser.add_argument("--partner", default=None)
+    parser.add_argument("--jiwer", default=None)
     args = parser.parse_args(argv)
 
     out = Path(args.output_dir)
@@ -164,6 +178,13 @@ def main(argv: list[str] | None = None) -> int:
             out / "partner-wer.csv", PARTNER_COLUMNS, partner.get("aggregate", {}), order,
         )
         written.append(("partner-wer.csv", count))
+
+    jiwer_data = load(args.jiwer)
+    if jiwer_data:
+        count = write_table(
+            out / "jiwer-wer.csv", JIWER_COLUMNS, jiwer_data.get("aggregate", {}), order,
+        )
+        written.append(("jiwer-wer.csv", count))
 
     for name, count in written:
         print(f"  {name}  ({count} systems)")
