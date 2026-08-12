@@ -32,12 +32,15 @@ splits them further: for the community-1 pipeline, **4.0% of reference words
 misheard, 6.5% missed, 1.0% added**. Deletions are now the largest term, and
 insertions -- which used to carry half the total -- are about a point.
 
-The partner team's independent implementation agrees on the ordering:
-14.3% / 15.7% / 18.9% filler-normalized (`partner-wer.csv`).
+Two independent WER implementations agree on that ordering. The partner team's
+compareFiles.py: 14.3% / 15.7% / 18.9% filler-normalized (`partner-wer.csv`).
+The study team's jiwer script, vendored unmodified: 14.5% / 15.8% / 17.5%
+pooled (`jiwer-wer.csv`). Three implementations, three alignment rules, one
+ranking.
 
 ## Figures (PNG at 2x)
 
-Two sets of the same twelve charts:
+Two sets of the same fifteen charts:
 
 - **`figures/`** — with the explanatory caption under each chart. Use these when
   the figure travels on its own and has to carry its own caveats.
@@ -61,6 +64,7 @@ colours, and without the legend they cannot be read at all.
 | `mono-vs-stereo-wer.png`, `mono-vs-stereo-der.png` | 203 mono files against 66 stereo-container files |
 | `pii-redaction.png` | Over- and under-redaction against the human annotation |
 | `partner-wer.png` | The partner team's own WER implementation, run unmodified |
+| `jiwer-wer.png` | The study team's jiwer WER script, run unmodified |
 
 Vector versions of every chart are inline in `eval_report.html`. Regenerate
 either set with `scripts/export_charts.py`, adding `--clean` for the second.
@@ -75,13 +79,14 @@ either set with `scripts/export_charts.py`, adding `--clean` for the second.
 | `wer-error-types.csv` | WER by edit category; columns sum to WER |
 | `pii-redaction.csv` | Span P/R/F1, over/under rates, leak rate |
 | `partner-wer.csv` | Their three-tier WER and word ratio |
+| `jiwer-wer.csv` | jiwer WER pooled/mean/median, S/D/I rates, and the filler-symmetric variant |
 
 Rates are percentages of reference words (or of gold spans, for redaction).
 
 ## Raw results (`data/`, JSON)
 
 `results.json`, `results_mono.json`, `results_stereo.json`, `taxonomy.json`,
-`redaction.json`, `partner_wer.json`. Each carries a `per_visit` block, so any
+`redaction.json`, `partner_wer.json`, `jiwer_wer.json`. Each carries a `per_visit` block, so any
 figure here can be traced to the visits behind it. Keyed by full system name.
 
 ## Caveats that change how these read
@@ -129,22 +134,24 @@ uv run python scripts/evaluate_systems.py --cohort $COHORT \
 uv run python scripts/error_taxonomy.py --cohort $COHORT ... --output outputs/taxonomy.json
 uv run python scripts/score_redaction.py --cohort $COHORT ... --output outputs/redaction.json
 uv run python scripts/score_partner_wer.py --cohort $COHORT ... --output outputs/partner_wer.json
+uv run python scripts/score_jiwer_wer.py --cohort $COHORT ... --output outputs/jiwer_wer.json
 ```
 
 Then locally, with the JSON fetched into `data/`:
 
 ```bash
 uv run python scripts/plot_results.py data/results.json \
-    --partner data/partner_wer.json --mono data/results_mono.json \
+    --partner data/partner_wer.json --jiwer data/jiwer_wer.json --mono data/results_mono.json \
     --stereo data/results_stereo.json --redaction data/redaction.json \
     --taxonomy data/taxonomy.json --font dmsans.ttf --output eval_report.html
 uv run python scripts/export_charts.py data/results.json \
-    --partner data/partner_wer.json --mono data/results_mono.json \
+    --partner data/partner_wer.json --jiwer data/jiwer_wer.json --mono data/results_mono.json \
     --stereo data/results_stereo.json --redaction data/redaction.json \
     --taxonomy data/taxonomy.json --output-dir figures --font dmsans.ttf
 # same again with --clean --output-dir figures-clean for the caption-free set
 uv run python scripts/export_tables.py --output-dir tables \
     --results data/results.json --mono data/results_mono.json \
     --stereo data/results_stereo.json --taxonomy data/taxonomy.json \
-    --redaction data/redaction.json --partner data/partner_wer.json
+    --redaction data/redaction.json --partner data/partner_wer.json \
+    --jiwer data/jiwer_wer.json
 ```

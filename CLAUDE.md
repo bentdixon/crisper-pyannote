@@ -660,6 +660,52 @@ depressing the word ratio to 1.13. `reference_prose` now reuses
 prepare_data's `TIMESTAMPED_LINE`, whose speaker field is a bare `(\S+)`.
 The word-ratio agreement with our metric is what caught it.
 
+### Third WER implementation: the study team's jiwer script (2026-08-12)
+
+`scripts/nvidia_wer.py` is that script vendored unmodified;
+`scripts/score_jiwer_wer.py` imports its `preprocess_transcript` and
+`calculate_wer` and runs them over the same 269 visits, the same adapters and
+the same coverage window. Its rule: delete everything inside square brackets,
+strip all punctuation, lowercase, then jiwer's edit distance. Unlike the
+partner metric this is a true minimum edit distance, so it lands between ours
+and theirs.
+
+    system         visits   pooled    mean   median     sub     del     ins   no-fill
+    ours              269   0.1447  0.1427   0.1222  0.0436  0.0906  0.0105    0.1216
+    ours_llm          269   0.1455  0.1435   0.1223  0.0441  0.0906  0.0109    0.1225
+    baseline          269   0.1584  0.1546   0.1360  0.0559  0.0815  0.0209    0.1364
+    baseline_llm      269   0.1584  0.1546   0.1360  0.0559  0.0815  0.0209    0.1364
+    chirp3            269   0.1746  0.1747   0.1273  0.0516  0.0926  0.0303    0.1704
+    verbatimize       269   0.1872  0.1876   0.1318  0.0556  0.1039  0.0277    0.1732
+
+**Same ordering again, from a third independent implementation**: ours <
+baseline < chirp3 < verbatimize, and the LLM review is never better. Three
+alignment rules (Levenshtein via jiwer, Levenshtein via our scorer, difflib via
+theirs) and three normalization conventions now agree, which is the strongest
+statement available about the ranking.
+
+Two properties of their rule worth knowing:
+
+- **Deleting bracketed content is not system-neutral.** It removes the human
+  transcripts' `[inaudible]`, which is the intent, but it also removes every
+  CrisperWhisper filled pause -- CW2 writes `[UM]`/`[UH]` while Chirp writes a
+  plain "um" that survives -- so the CW2 arms are charged deletions for
+  disfluencies they did transcribe. The `no-fill` column drops filled pauses
+  from both sides for every system alike (`FILLER_RE` from partner_compare):
+  the CW2 lead *widens*, 0.122 against chirp3's 0.170, so the asymmetry was
+  working against the systems that win. Deletions are the largest term for
+  every system either way.
+- **Their file loader is not usable on this corpus** and is bypassed: it
+  matches only `^S\d+:\s+HH:MM:SS.mmm`, so on the 56k `INTERVIEWER:` lines the
+  tag and timestamp digits would become reference words. The reference comes
+  from the windowed turns instead, same as every other scorer. Their brace
+  handling is left alone (unlike the partner tokenizer, they do not strip
+  `{...}`, so 876 PII surface forms stay in the reference -- a rounding error).
+
+Reported as `JiwerWER` in the report, `figures/jiwer-wer.png` and
+`tables/jiwer-wer.csv`. The per-visit key is `jiwer_wer`, deliberately not
+`wer`, so merging it cannot overwrite our own per-visit WER.
+
 ## PII redaction (2026-08-11)
 
 Answers the DIALOG-DeID section 2.3 question on this corpus: span-level
