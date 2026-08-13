@@ -757,6 +757,78 @@ same difflib replace block, which is exactly the correspondence needed.
   that caught it. Gemma flagging "Boylston" and "MBTA" (city-identifying,
   unmarked by the transcriber) is the canonical case.
 
+### Turn-rewrite mode, and why it did not replace chunking (2026-08-13)
+
+`redact_llm.py --mode turn` is a second protocol: one speaker turn per call, the
+model returning the turn verbatim with PII replaced inline by `[LABEL]`. The
+rewrite is never trusted -- `align_rewrite` difflib-aligns it back onto the
+original words, only placeholder-for-word substitutions are honoured, and a turn
+altered past `MIN_VERBATIM_RATIO` (0.85, counting redacted words as accounted
+for) is dropped unredacted and counted.
+
+A 4-transcript pilot looked decisive: recall 89.8% against chunk mode's 84.7%,
+leaks 6 against 16 of 59 spans. **It did not survive a held-out set.** On 24
+transcripts and 180 leak-testable gold spans (`scripts/select_validation.py`,
+which requires surface-kept spans -- only 35 visits corpus-wide have them):
+
+    system         gold   TP   FP  recall  precision     F1   leak
+    turn            180  160   97   88.9%      62.3%  73.2%   1.7%
+    chunk           180  157   84   87.2%      65.1%  74.6%   5.0%
+    chirp3          180  134  141   74.4%      48.7%  58.9%   7.8%
+
+The spans are paired, so the test is exact McNemar on the discordant ones, not
+two independent proportions:
+
+    detection   chunk vs turn   only-chunk  1   only-turn  4    p=0.375
+    leaks       chunk vs turn   only-chunk  7   only-turn  1    p=0.070
+    leaks       chirp vs turn   only-chirp 12   only-turn  1    p=0.0034
+    detection   chirp vs turn   only-chirp  9   only-turn 35    p=0.0001
+
+So: **turn mode is indistinguishable from chunk mode on detection** (a 3-span
+difference), its lower leak rate is suggestive but not significant at n=180, and
+it over-redacts more (FP 97 vs 84, F1 slightly *worse*). Both LLM modes beat
+Chirp-3 decisively on both. The pilot's apparent win was small-sample regression:
+its entire leak advantage was ten spans in one visit.
+
+Decision: **chunk mode stays the default.** Turn mode costs ~26x the calls
+(7,116 turns for 24 transcripts against 2,814 chunks for 269) for no established
+accuracy gain. It is kept, working and validated, behind `--mode turn`.
+
+Reliability was never the issue: 5 turns of 7,116 fell back (0.07%), zero
+unmatched spans across the pilot and validation runs combined.
+
+Cost, after `--batch-size` and `--prefix-cache` (below): 0.0356 s/word, i.e.
+11.6 GPU-hours per tree corpus-wide, 23 minutes wall for the 24 validation
+transcripts across three H100s.
+
+### Batching and prefix caching for turn mode
+
+The pilot's per-call time was flat at 1.6-2.6 s while turn length varied
+twofold, so the cost was fixed per call, not per word: a 564-token shared prompt
+prefix re-encoded in front of a turn averaging twenty tokens.
+
+- `--batch-size N` groups length-sorted turns into one `generate()`.
+- `--prefix-cache` prefills the instructions and both worked examples once and
+  reuses the KV cache. Padding sits *between* the prefix and the turn, so the
+  prefix stays a true token prefix of every row -- left-padding the whole prompt
+  would put pad tokens in front of it and misalign the cache. Whether it really
+  is a token prefix is checked per batch (`PrefixCache.covers`), because
+  tokenizers can merge across a string boundary; a mismatch falls back to full
+  prompts with a warning.
+
+Measured 2.76x on the pilot's four transcripts (2,044 s -> 740 s) with
+**bit-identical output**: 100 redactions, zero differences. The remaining loss is
+structural to static batching -- `generate()` runs a batch until every sequence
+finishes, so a batch pays for its longest member (uniform-length SI00132 got
+4.0x, ragged YA03473 got 1.8x). Continuous batching (vLLM) would fix that, and
+would subsume the static prefix cache; vLLM is not installed in this project's
+environment.
+
+Two operational notes for this environment: torch orders CUDA devices
+fastest-first by default, so `cuda:0` is the first H100 (nvidia-smi index 4) and
+not the A100 at index 0; and `ssh host 'cmd &'` still waits for the channel, so
+detached launches need `-n` and `</dev/null`, or `setsid`.
+
 ### The chunking protocol, and why it addresses sentences
 
 `redact_llm.py` cuts the transcript into chunks of at most 5000 characters,
