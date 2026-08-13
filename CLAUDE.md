@@ -801,6 +801,50 @@ Cost, after `--batch-size` and `--prefix-cache` (below): 0.0356 s/word, i.e.
 11.6 GPU-hours per tree corpus-wide, 23 minutes wall for the 24 validation
 transcripts across three H100s.
 
+### Possessive names were structurally unredactable in chunk mode (2026-08-13)
+
+`locate()` matches the model's quoted span against normalized word tokens, and
+`normalize` keeps apostrophes: "Zoe" -> `zoe`, "Zoe's" -> `zoe's`. The prompt
+said *quote ONLY the identifying words themselves*, so the model quoted "Zoe",
+which can never match the token "Zoe's" -- the span was dropped and counted as
+an unmatched quote. Possessive names could not be redacted by chunk mode no
+matter how well the model did its job, and this was invisible because a dropped
+quote looks exactly like a chunk with no PII in it.
+
+Both prompts now require the possessive form, and `apply_labels` carries a
+trailing possessive onto the placeholder, so a redacted sentence still says
+whose thing it is: "Zoe's gonna hop on" -> "[PERSON_NAME]'s gonna hop on".
+
+Rerun on the same 24 validation transcripts and 180 spans:
+
+    system                  TP   FP  recall  precision     F1   leaked
+    chunk + possessive     161   81   89.4%      66.5%  76.3%     8
+    chunk                  157   84   87.2%      65.1%  74.6%     9
+    turn + possessive      160   98   88.9%      62.0%  73.1%     3
+    turn                   160   97   88.9%      62.3%  73.2%     3
+    chirp3                 134  141   74.4%      48.7%  58.9%    14
+
+- **Chunk mode gained 4 spans and lost none** -- strictly one-directional, which
+  is what a mechanical fix should look like. Better on every measure.
+- **Turn mode did not move at all**: same 160 true positives, same 3 leaks. It
+  never had the quote-matching defect, because it replaces words inline rather
+  than quoting them back, so the rule had nothing to fix.
+- After the fix the two protocols are **level on detection** (5 vs 4 discordant
+  spans, p=1.0). Turn keeps a leak edge (7 vs 2 discordant, p=0.18), still not
+  significant.
+
+Turn mode still misses the "Zoe's" span that motivated this, and for an unrelated
+reason: it redacted *nothing at all* in that transcript (`redacted_words: 0` over
+120 turns, no fallbacks), while chunk mode found the one gold span. A plain first
+name in a 76-word turn was simply not acted on.
+
+Leak counts overstate the gap in both directions, because a leak is any gold span
+whose surface survives, and the gold braces mark things that are not identifiers:
+of turn mode's 3, one is a bare month and one a three-word statement about
+religion, leaving one genuine name. Chunk mode's 8 are 7 single words plus the
+same three-word phrase, and judging those needs a human read of
+`outputs/private/leaks_validation_poss.csv`.
+
 ### Batching and prefix caching for turn mode
 
 The pilot's per-call time was flat at 1.6-2.6 s while turn length varied
