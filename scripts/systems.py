@@ -57,6 +57,20 @@ SYSTEMS: list[tuple[str, list[str], str, str]] = [
         "community-1 pipeline, PII redacted one speaker turn at a time",
     ),
     (
+        "ours_redacted_poss",
+        ["CrisperWhisper 2.0 ASR", "pyannote community-1",
+         "Gemma 4 31B redaction (possessive rule)"],
+        "#6f5bd8",
+        "chunk protocol, prompt fixed to quote possessives with their 's",
+    ),
+    (
+        "ours_redacted_turn_poss",
+        ["CrisperWhisper 2.0 ASR", "pyannote community-1",
+         "Gemma 4 31B redaction (turn rewrite, possessive rule)"],
+        "#a394ec",
+        "turn protocol, prompt fixed to keep the 's on the label",
+    ),
+    (
         "baseline",
         ["CrisperWhisper 2.0 ASR", "pyannote 3.1"],
         "#eda100",

@@ -60,6 +60,16 @@ REDACTION_ADAPTERS.update({
     "baseline_redacted_turn": (
         make_file_adapter("_words_redacted_turn.json"), "_words_redacted_turn.json",
     ),
+    # Same two protocols after the possessive rule was added to both prompts.
+    # Written to their own suffixes so the before and after can be scored on the
+    # same transcripts in one run rather than one overwriting the other.
+    "ours_redacted_poss": (
+        make_run_adapter("transcript_redacted_poss.json"), "transcript_redacted_poss.json",
+    ),
+    "ours_redacted_turn_poss": (
+        make_run_adapter("transcript_redacted_turn_poss.json"),
+        "transcript_redacted_turn_poss.json",
+    ),
 })
 
 

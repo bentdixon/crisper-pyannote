@@ -102,6 +102,9 @@ Rules:
   sentence. Do not include surrounding words like "in", "on", "my", "called".
 - Do not mark the interviewer's generic questions, clinical terms, or common
   words that merely resemble names.
+- Possessives: quote the word exactly as it appears, WITH its apostrophe-s.
+  For "Zoe's gonna hop on" the text is "Zoe's", not "Zoe". A quote that does
+  not appear in the sentence verbatim is discarded.
 - If a span is already written as [PERSON_NAME] or similar, ignore it.
 - Relative time expressions are NOT dates.
 
@@ -160,6 +163,9 @@ repetitions and punctuation. Do not correct, shorten or rephrase anything.
 "I saw Maria on Tuesday" becomes "I saw [PERSON_NAME] on Tuesday".
 - A multi-word identifier becomes a single label: "San Francisco" becomes \
 "[LOCATION]", not "[LOCATION] [LOCATION]".
+- A possessive name is still the name: "Zoe's gonna hop on" becomes \
+"[PERSON_NAME]'s gonna hop on". Replace the name and keep the apostrophe-s on \
+the label. Never leave the name attached to the 's.
 - Leave existing labels like [PERSON_NAME] exactly as they are.
 - Do not mark clinical terms, the interviewer's generic questions, or common \
 words that merely resemble names.
@@ -733,8 +739,12 @@ def apply_labels(words: list[dict], redactions: dict[int, str]) -> list[dict]:
         label = redactions.get(index)
         if label:
             # Punctuation is preserved so turn text still reads correctly and
-            # the sentence structure a reviewer relies on survives.
-            trailing = re.search(r"[.,!?;:]+$", str(word.get("word", "")))
+            # the sentence structure a reviewer relies on survives. The
+            # possessive goes with it: "Zoe's" becomes "[PERSON_NAME]'s", not
+            # "[PERSON_NAME]", so the sentence still says whose thing it is
+            # while the name is gone.
+            original = str(word.get("word", ""))
+            trailing = re.search(r"(?:['’]s)?[.,!?;:]*$", original)
             copy["word"] = f"[{label}]" + (trailing.group(0) if trailing else "")
             copy["redacted_from"] = word.get("word")
             copy["redaction_label"] = label
