@@ -815,34 +815,42 @@ Both prompts now require the possessive form, and `apply_labels` carries a
 trailing possessive onto the placeholder, so a redacted sentence still says
 whose thing it is: "Zoe's gonna hop on" -> "[PERSON_NAME]'s gonna hop on".
 
-Rerun on the same 24 validation transcripts and 180 spans:
+Turn mode had a second, self-inflicted version of the same defect, found only
+because the first rerun's result looked implausible. The new rule tells the model
+to write "[PERSON_NAME]'s", but `PLACEHOLDER_TOKEN` allowed brackets plus
+trailing *punctuation* only -- so the aligner read the possessive placeholder as
+an ordinary word, saw an edit block with no placeholder in it, and discarded a
+correct redaction through the `if not labels: continue` path **without counting
+it**. The prompt and the parser were changed in one commit and only the prompt
+was tested. A probe sending that turn to the model three ways showed all three
+replies contained "[PERSON_NAME]'s gonna help out" while the aligner returned
+`{}` with zero unmatched: `redacted_words: 0` on a transcript the model had
+handled correctly. `PLACEHOLDER_TOKEN` now accepts an optional possessive (both
+apostrophe forms), and bracket-shaped output the aligner cannot parse increments
+`unmatched` so this can never be silent again.
+
+Rerun on the same 24 validation transcripts and 180 spans, after both fixes:
 
     system                  TP   FP  recall  precision     F1   leaked
     chunk + possessive     161   81   89.4%      66.5%  76.3%     8
     chunk                  157   84   87.2%      65.1%  74.6%     9
-    turn + possessive      160   98   88.9%      62.0%  73.1%     3
+    turn + possessive      164   98   91.1%      62.6%  74.2%     2
     turn                   160   97   88.9%      62.3%  73.2%     3
     chirp3                 134  141   74.4%      48.7%  58.9%    14
 
-- **Chunk mode gained 4 spans and lost none** -- strictly one-directional, which
-  is what a mechanical fix should look like. Better on every measure.
-- **Turn mode did not move at all**: same 160 true positives, same 3 leaks. It
-  never had the quote-matching defect, because it replaces words inline rather
-  than quoting them back, so the rule had nothing to fix.
-- After the fix the two protocols are **level on detection** (5 vs 4 discordant
-  spans, p=1.0). Turn keeps a leak edge (7 vs 2 discordant, p=0.18), still not
-  significant.
+**Both protocols gained exactly 4 spans and lost none** -- strictly
+one-directional, which is what a mechanical fix should look like rather than a
+prompt nudge trading one error for another. Turn mode now leads recall (91.1%),
+chunk mode leads precision and F1 (66.5%, 76.3), and the detection difference
+between them is 4 spans against 1 (p=0.375), still not significant.
 
-Turn mode still misses the "Zoe's" span that motivated this, and for an unrelated
-reason: it redacted *nothing at all* in that transcript (`redacted_words: 0` over
-120 turns, no fallbacks), while chunk mode found the one gold span. A plain first
-name in a 76-word turn was simply not acted on.
-
-Leak counts overstate the gap in both directions, because a leak is any gold span
-whose surface survives, and the gold braces mark things that are not identifiers:
-of turn mode's 3, one is a bare month and one a three-word statement about
-religion, leaving one genuine name. Chunk mode's 8 are 7 single words plus the
-same three-word phrase, and judging those needs a human read of
+Leak counts need the same scepticism as everything else here: a leak is any gold
+span whose surface survives, and the braces mark material that is not
+identifying. Classified, **turn mode's 2 remaining leaks are a bare month and a
+three-word statement about religion -- zero genuine identifiers**, while chunk
+mode's 8 are 7 single words plus that same phrase. If those 7 are names, turn
+mode's leak advantage (7 discordant against 1, p=0.070) is real and is the
+argument for its ~26x compute cost; judging them needs a human read of
 `outputs/private/leaks_validation_poss.csv`.
 
 ### Batching and prefix caching for turn mode
