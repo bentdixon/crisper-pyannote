@@ -447,7 +447,19 @@ def group_turns(words: list[dict]) -> list[tuple[int, int]]:
     return spans
 
 
-PLACEHOLDER_TOKEN = re.compile(r"^\[([A-Z_]+)\][.,!?;:]*$")
+# The possessive suffix is part of the placeholder, not part of a word. The
+# prompt asks for "[PERSON_NAME]'s", and a pattern that allowed only trailing
+# punctuation read that back as an ordinary token: the model redacted the name,
+# the aligner saw a plain word-for-word replacement with no placeholder in it,
+# and dropped the redaction without counting it. Both apostrophe forms, because
+# the model emits either.
+PLACEHOLDER_TOKEN = re.compile(r"^\[([A-Z_]+)\](?:['’]s)?[.,!?;:]*$")
+
+# Anything bracket-shaped, used only to notice placeholders this module failed
+# to recognise. A redaction the model made and the aligner could not read must
+# be counted, never silently discarded -- that is exactly how the possessive
+# defect above stayed invisible.
+BRACKETED = re.compile(r"\[[A-Z_]+\]")
 
 
 def align_rewrite(words: list[dict], span: tuple[int, int], reply: str,
@@ -506,6 +518,11 @@ def align_rewrite(words: list[dict], span: tuple[int, int], reply: str,
             len(labels) == len(placeholders) == i2 - i1 and len(labels) > 1
         )
         if not labels:
+            # A bracketed token here is a redaction the model made and this
+            # code could not parse -- count it rather than letting it pass as
+            # ordinary rewrite noise.
+            if any(BRACKETED.search(output[j]) for j in range(j1, j2)):
+                unmatched += 1
             continue
         if i2 == i1 or i2 - i1 > MAX_AMBIGUOUS_BLOCK:
             unmatched += 1
