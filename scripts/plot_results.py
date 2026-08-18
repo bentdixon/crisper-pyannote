@@ -43,6 +43,18 @@ WINNER = "#1baf7a"
 # not as "these are the same colour at three strengths".
 RAMP_INK = "#3f4a7a"
 
+# One colour per measure, shared by every row and by the key. The bars and the
+# legend read from these same dicts, so they cannot drift apart.
+METRIC_COLOURS = {"recall": "#1f6f8b", "precision": "#d98324", "f1": "#7a4fa3"}
+OUTCOME_COLOURS = {"caught": "#1f6f8b", "missed": "#b3382c", "extra": "#d98324"}
+LEAK_KIND_COLOURS = {
+    "single word": "#b3382c",
+    "two or three words": "#d98324",
+    "longer phrase": "#8a8f3c",
+    "month or date": "#3d7ea6",
+    "number": "#6b6f76",
+}
+
 # The system registry lives in systems.py so a name is defined once and
 # rendered the same way in every console table, JSON file, CSV and chart.
 SYSTEMS = registry.SYSTEMS
@@ -2287,8 +2299,7 @@ def pii_f1_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
     if not rows:
         return "", 0, 0
 
-    series = [("recall", "recall", 1.0), ("precision", "precision", 0.62),
-              ("F1", "f1", 0.34)]
+    series = [("recall", "recall"), ("precision", "precision"), ("F1", "f1")]
     bar_h, bar_gap = 11, 3
     line_h = 14
     max_lines = max(len(_label_lines(p)) for _, p, _, _ in rows)
@@ -2323,12 +2334,12 @@ def pii_f1_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
                 f'text-anchor="end" class="cat">{escape(text)}</text>'
             )
         top = y + (row_h - len(series) * (bar_h + bar_gap)) / 2
-        for series_index, (label, key, opacity) in enumerate(series):
+        for series_index, (label, key) in enumerate(series):
             value = stats.get(key) or 0.0
             by = top + series_index * (bar_h + bar_gap)
             out.append(
                 f'<rect x="{pad_l}" y="{by:.1f}" width="{plot_w * value:.1f}" '
-                f'height="{bar_h}" fill="{colour}" opacity="{opacity}" rx="1.5"/>'
+                f'height="{bar_h}" fill="{METRIC_COLOURS[key]}" rx="1.5"/>'
                 f'<text x="{pad_l + plot_w * value + 6:.1f}" y="{by + bar_h - 2:.1f}" '
                 f'class="val">{value * 100:.1f}</text>'
             )
@@ -2340,11 +2351,11 @@ def pii_f1_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
     tail = 0
     if legend:
         items = [
-            ("recall", _fade(RAMP_INK, 1.0),
+            ("recall", METRIC_COLOURS["recall"],
              "share of the human-marked spans the system redacted"),
-            ("precision", _fade(RAMP_INK, 0.62),
+            ("precision", METRIC_COLOURS["precision"],
              "share of its redactions that landed on a marked span"),
-            ("F1", _fade(RAMP_INK, 0.34), "their harmonic mean"),
+            ("F1", METRIC_COLOURS["f1"], "their harmonic mean"),
         ]
         block, tail = swatch_legend(items, width - pad_l, height - pad_b + 26, columns=1)
         out.append(f'<g transform="translate({pad_l - 34},0)">{block}</g>')
@@ -2394,9 +2405,12 @@ def pii_confusion_svg(data: dict | None, legend: bool = False) -> tuple[str, int
     ]
     for column_index, (title, _, _) in enumerate(columns):
         cx = pad_l + column_index * (cell_w + cell_gap) + cell_w / 2
+        # The heading carries its own swatch, so the column colour is named
+        # where it is used rather than in a separate key.
         out.append(
-            f'<text x="{cx:.1f}" y="{pad_t - 24}" text-anchor="middle" class="cat">'
-            f'{escape(title)}</text>'
+            f'<rect x="{cx - 34:.1f}" y="{pad_t - 33}" width="10" height="10" rx="2" '
+            f'fill="{OUTCOME_COLOURS[title]}"/>'
+            f'<text x="{cx - 18:.1f}" y="{pad_t - 24}" class="cat">{escape(title)}</text>'
         )
 
     for index, (name, label_parts, colour, stats) in enumerate(rows):
@@ -2409,15 +2423,16 @@ def pii_confusion_svg(data: dict | None, legend: bool = False) -> tuple[str, int
                 f'<text x="{pad_l - 14}" y="{first + line_index * line_h:.1f}" '
                 f'text-anchor="end" class="cat">{escape(text)}</text>'
             )
-        for column_index, (_, key, _) in enumerate(columns):
+        for column_index, (title, key, _) in enumerate(columns):
             value = stats.get(key) or 0
             x = pad_l + column_index * (cell_w + cell_gap)
             # Shade by the column's own maximum: the three quantities are on
             # different scales and a shared one would wash out the misses.
-            shade = 0.14 + 0.5 * (value / peak[key])
+            shade = 0.2 + 0.6 * (value / peak[key])
             out.append(
                 f'<rect x="{x}" y="{y + (row_h - cell_h) / 2:.1f}" width="{cell_w}" '
-                f'height="{cell_h}" rx="3" fill="{colour}" opacity="{shade:.2f}"/>'
+                f'height="{cell_h}" rx="3" fill="{OUTCOME_COLOURS[title]}" '
+                f'opacity="{shade:.2f}"/>'
                 f'<text x="{x + cell_w / 2:.1f}" y="{y + row_h / 2 + 5:.1f}" '
                 f'text-anchor="middle" class="cat">{value}</text>'
             )
@@ -2455,9 +2470,7 @@ def pii_leak_svg(data: dict | None, kinds: dict | None = None,
     if not rows:
         return "", 0, 0
 
-    order = ["single word", "two or three words", "longer phrase", "month or date", "number"]
-    opacity = {"single word": 1.0, "two or three words": 0.55, "longer phrase": 0.42,
-               "month or date": 0.28, "number": 0.2}
+    order = list(LEAK_KIND_COLOURS)
 
     line_h = 14
     max_lines = max(len(_label_lines(p)) for _, p, _, _ in rows)
@@ -2507,7 +2520,7 @@ def pii_leak_svg(data: dict | None, kinds: dict | None = None,
             w = plot_w * count / peak
             out.append(
                 f'<rect x="{x:.1f}" y="{cy:.1f}" width="{max(w, 0.6):.1f}" height="14" '
-                f'fill="{colour}" opacity="{opacity.get(kind_name, 0.5)}"/>'
+                f'fill="{LEAK_KIND_COLOURS[kind_name]}"/>'
             )
             x += w
         rate = stats.get("leak_rate")
@@ -2522,7 +2535,7 @@ def pii_leak_svg(data: dict | None, kinds: dict | None = None,
     tail = 0
     if legend:
         block, tail = swatch_legend(
-            [(k, _fade(RAMP_INK, opacity[k]), "") for k in order],
+            [(k, LEAK_KIND_COLOURS[k], "") for k in order],
             width - pad_l, height - pad_b + 26, columns=3,
         )
         out.append(f'<g transform="translate({pad_l - 34},0)">{block}</g>')
