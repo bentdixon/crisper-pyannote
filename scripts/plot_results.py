@@ -1023,7 +1023,7 @@ def redaction_svg(data: dict | None) -> tuple[str, int, int]:
         return "", 0, 0
 
     line_h = 14
-    max_lines = max(len(p) for _, p, _, _ in rows)
+    max_lines = max(len(_label_lines(p)) for _, p, _, _ in rows)
     row_h = max(34, max_lines * line_h + 8)
     gap, pad_l, pad_r, pad_t, pad_b = 14, 250, 62, 20, 34
     plot_w = 340
@@ -2225,6 +2225,40 @@ if __name__ == "__main__":
 # one subset, so they take the results dict directly rather than the report's
 # merged aggregate.
 
+def _fade(colour: str, opacity: float) -> str:
+    """A hex colour blended toward white, so a legend swatch can key an opacity.
+
+    swatch_legend draws solid rectangles; the stacked bars distinguish their
+    segments by opacity over one colour. Blending gives the key the same ramp
+    the bars use without teaching the legend about transparency.
+    """
+    r, g, b = (int(colour[i:i + 2], 16) for i in (1, 3, 5))
+    mix = lambda c: round(c * opacity + 255 * (1 - opacity))
+    return "#%02x%02x%02x" % (mix(r), mix(g), mix(b))
+
+
+def _label_lines(parts: list[str], limit: int = 34) -> list[str]:
+    """System label as wrapped lines, with the joining "+" kept on the break.
+
+    The registry names run to "Gemma 4 31B redaction (turn rewrite, possessive
+    rule)", which overflows the label column and is silently clipped at the left
+    edge of the figure -- the component simply loses its first words.
+    """
+    lines: list[str] = []
+    for index, part in enumerate(parts):
+        text = part + (" +" if index < len(parts) - 1 else "")
+        current = ""
+        for word in text.split():
+            if current and len(current) + len(word) + 1 > limit:
+                lines.append(current)
+                current = word
+            else:
+                current = f"{current} {word}".strip()
+        if current:
+            lines.append(current)
+    return lines
+
+
 def _redaction_rows(data: dict | None):
     """Registered systems present in a redaction results file, in registry order."""
     if not data:
@@ -2253,7 +2287,7 @@ def pii_f1_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
               ("F1", "f1", 0.34)]
     bar_h, bar_gap = 11, 3
     line_h = 14
-    max_lines = max(len(p) for _, p, _, _ in rows)
+    max_lines = max(len(_label_lines(p)) for _, p, _, _ in rows)
     row_h = max(len(series) * (bar_h + bar_gap), max_lines * line_h + 6)
     gap, pad_l, pad_r, pad_t, pad_b = 16, 250, 54, 22, 30
     plot_w = 330
@@ -2276,13 +2310,13 @@ def pii_f1_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
     best = max((s.get("f1") or 0) for _, _, _, s in rows)
     for index, (name, label_parts, colour, stats) in enumerate(rows):
         y = pad_t + index * (row_h + gap)
-        block = len(label_parts) * line_h
+        lines = _label_lines(label_parts)
+        block = len(lines) * line_h
         first = y + (row_h - block) / 2 + line_h - 4
-        for line_index, component in enumerate(label_parts):
-            suffix = " +" if line_index < len(label_parts) - 1 else ""
+        for line_index, text in enumerate(lines):
             out.append(
                 f'<text x="{pad_l - 14}" y="{first + line_index * line_h:.1f}" '
-                f'text-anchor="end" class="cat">{escape(component + suffix)}</text>'
+                f'text-anchor="end" class="cat">{escape(text)}</text>'
             )
         top = y + (row_h - len(series) * (bar_h + bar_gap)) / 2
         for series_index, (label, key, opacity) in enumerate(series):
@@ -2337,7 +2371,7 @@ def pii_confusion_svg(data: dict | None, legend: bool = False) -> tuple[str, int
     ]
     cell_w, cell_h, cell_gap = 96, 34, 6
     line_h = 14
-    max_lines = max(len(p) for _, p, _, _ in rows)
+    max_lines = max(len(_label_lines(p)) for _, p, _, _ in rows)
     row_h = max(cell_h, max_lines * line_h + 6)
     pad_l, pad_r, pad_t, pad_b = 250, 30, 46, 34
     width = pad_l + len(columns) * (cell_w + cell_gap) + pad_r
@@ -2365,13 +2399,13 @@ def pii_confusion_svg(data: dict | None, legend: bool = False) -> tuple[str, int
 
     for index, (name, label_parts, colour, stats) in enumerate(rows):
         y = pad_t + index * (row_h + cell_gap)
-        block = len(label_parts) * line_h
+        lines = _label_lines(label_parts)
+        block = len(lines) * line_h
         first = y + (row_h - block) / 2 + line_h - 4
-        for line_index, component in enumerate(label_parts):
-            suffix = " +" if line_index < len(label_parts) - 1 else ""
+        for line_index, text in enumerate(lines):
             out.append(
                 f'<text x="{pad_l - 14}" y="{first + line_index * line_h:.1f}" '
-                f'text-anchor="end" class="cat">{escape(component + suffix)}</text>'
+                f'text-anchor="end" class="cat">{escape(text)}</text>'
             )
         for column_index, (_, key, _) in enumerate(columns):
             value = stats.get(key) or 0
@@ -2413,7 +2447,7 @@ def pii_leak_svg(data: dict | None, kinds: dict | None = None,
                "month or date": 0.28, "number": 0.2}
 
     line_h = 14
-    max_lines = max(len(p) for _, p, _, _ in rows)
+    max_lines = max(len(_label_lines(p)) for _, p, _, _ in rows)
     row_h = max(26, max_lines * line_h + 6)
     gap, pad_l, pad_r, pad_t, pad_b = 16, 250, 96, 22, 30
     plot_w = 300
@@ -2446,13 +2480,13 @@ def pii_leak_svg(data: dict | None, kinds: dict | None = None,
 
     for index, (name, label_parts, colour, stats) in enumerate(rows):
         y = pad_t + index * (row_h + gap)
-        block = len(label_parts) * line_h
+        lines = _label_lines(label_parts)
+        block = len(lines) * line_h
         first = y + (row_h - block) / 2 + line_h - 4
-        for line_index, component in enumerate(label_parts):
-            suffix = " +" if line_index < len(label_parts) - 1 else ""
+        for line_index, text in enumerate(lines):
             out.append(
                 f'<text x="{pad_l - 14}" y="{first + line_index * line_h:.1f}" '
-                f'text-anchor="end" class="cat">{escape(component + suffix)}</text>'
+                f'text-anchor="end" class="cat">{escape(text)}</text>'
             )
         x = pad_l
         cy = y + (row_h - 14) / 2
@@ -2475,7 +2509,7 @@ def pii_leak_svg(data: dict | None, kinds: dict | None = None,
     tail = 0
     if legend:
         block, tail = swatch_legend(
-            [(k, MUTED_DARK if opacity[k] > 0.5 else MUTED, "") for k in order],
+            [(k, _fade(TEXT, opacity[k]), "") for k in order],
             width - pad_l, height - pad_b + 26, columns=3,
         )
         out.append(f'<g transform="translate({pad_l - 34},0)">{block}</g>')
