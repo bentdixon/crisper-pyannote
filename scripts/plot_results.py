@@ -2373,7 +2373,7 @@ def pii_confusion_svg(data: dict | None, legend: bool = False) -> tuple[str, int
     line_h = 14
     max_lines = max(len(_label_lines(p)) for _, p, _, _ in rows)
     row_h = max(cell_h, max_lines * line_h + 6)
-    pad_l, pad_r, pad_t, pad_b = 250, 30, 46, 34
+    pad_l, pad_r, pad_t, pad_b = 250, 30, 46, 52
     width = pad_l + len(columns) * (cell_w + cell_gap) + pad_r
     height = pad_t + len(rows) * (row_h + cell_gap) + pad_b
 
@@ -2392,10 +2392,6 @@ def pii_confusion_svg(data: dict | None, legend: bool = False) -> tuple[str, int
             f'<text x="{cx:.1f}" y="{pad_t - 24}" text-anchor="middle" class="cat">'
             f'{escape(title)}</text>'
         )
-    out.append(
-        f'<text x="{width - pad_r}" y="{pad_t - 24}" text-anchor="end" class="tick">'
-        f'of {rows[0][3].get("gold_spans", 0)} gold spans</text>'
-    )
 
     for index, (name, label_parts, colour, stats) in enumerate(rows):
         y = pad_t + index * (row_h + cell_gap)
@@ -2420,11 +2416,20 @@ def pii_confusion_svg(data: dict | None, legend: bool = False) -> tuple[str, int
                 f'text-anchor="middle" class="cat">{value}</text>'
             )
 
-    out.append(
-        f'<text x="{pad_l}" y="{height - pad_b + 20}" class="tick">'
-        f'no true-negative cell: the annotation marks where PII is, never where '
-        f'it is not</text></svg>'
-    )
+    # Two short lines rather than one long one: the note ran past the right
+    # edge of the figure and was cut mid-sentence.
+    notes = [
+        f'caught + missed = {rows[0][3].get("gold_spans", 0)} gold spans; '
+        f'extra are redactions on unmarked text',
+        'no true-negative cell: the annotation marks where PII is, '
+        'never where it is not',
+    ]
+    for note_index, note in enumerate(notes):
+        out.append(
+            f'<text x="{pad_l}" y="{height - pad_b + 20 + note_index * 14}" '
+            f'class="tick">{escape(note)}</text>'
+        )
+    out.append("</svg>")
     return "".join(out), width, height
 
 
