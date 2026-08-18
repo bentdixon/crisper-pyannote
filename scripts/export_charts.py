@@ -276,7 +276,7 @@ def validation_figures(validation: dict | None, kinds: dict | None,
         "the privacy question asked directly, with no alignment step to trust. The "
         "split is by the shape of the leaked text, not by a verdict on it: the "
         "annotation marks material that identifies nobody, so a bare month or a "
-        "sentence about religion counts as a leak while being harmless. The dark "
+        "sentence about religion counts as a leak while being harmless. The red "
         "segment is single words, which is where a name would be and what still "
         "needs a human read.",
         clean=clean,
