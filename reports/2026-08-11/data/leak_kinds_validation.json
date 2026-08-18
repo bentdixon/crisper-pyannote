@@ -1,0 +1,39 @@
+{
+  "CrisperWhisper 2.0 ASR + pyannote community-1 + Gemma 4 31B redaction": {
+    "kinds": {
+      "single word": 8,
+      "two or three words": 1
+    },
+    "total": 9
+  },
+  "CrisperWhisper 2.0 ASR + pyannote community-1 + Gemma 4 31B redaction (possessive rule)": {
+    "kinds": {
+      "single word": 7,
+      "two or three words": 1
+    },
+    "total": 8
+  },
+  "Chirp-3 ASR + Chirp-3 diarization + Chirp-3 redaction": {
+    "kinds": {
+      "month or date": 1,
+      "single word": 12,
+      "two or three words": 1
+    },
+    "total": 14
+  },
+  "CrisperWhisper 2.0 ASR + pyannote community-1 + Gemma 4 31B redaction (turn rewrite)": {
+    "kinds": {
+      "month or date": 1,
+      "single word": 1,
+      "two or three words": 1
+    },
+    "total": 3
+  },
+  "CrisperWhisper 2.0 ASR + pyannote community-1 + Gemma 4 31B redaction (turn rewrite, possessive rule)": {
+    "kinds": {
+      "month or date": 1,
+      "two or three words": 1
+    },
+    "total": 2
+  }
+}

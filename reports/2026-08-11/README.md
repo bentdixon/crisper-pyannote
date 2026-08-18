@@ -40,7 +40,7 @@ ranking.
 
 ## Figures (PNG at 2x)
 
-Two sets of the same fifteen charts:
+Two sets of the same eighteen charts:
 
 - **`figures/`** — with the explanatory caption under each chart. Use these when
   the figure travels on its own and has to carry its own caveats.
@@ -65,6 +65,9 @@ colours, and without the legend they cannot be read at all.
 | `pii-redaction.png` | Over- and under-redaction against the human annotation |
 | `partner-wer.png` | The partner team's own WER implementation, run unmodified |
 | `jiwer-wer.png` | The study team's jiwer WER script, run unmodified |
+| `pii-detection-f1.png` | PII span recall, precision and F1 per redactor (validation run) |
+| `pii-confusion.png` | Caught / missed / extra counts; no true-negative cell exists |
+| `pii-leak-rate.png` | Identifiers left in the clear, split by the shape of the leaked text |
 
 Vector versions of every chart are inline in `eval_report.html`. Regenerate
 either set with `scripts/export_charts.py`, adding `--clean` for the second.
@@ -86,7 +89,7 @@ Rates are percentages of reference words (or of gold spans, for redaction).
 ## Raw results (`data/`, JSON)
 
 `results.json`, `results_mono.json`, `results_stereo.json`, `taxonomy.json`,
-`redaction.json`, `partner_wer.json`, `jiwer_wer.json`. Each carries a `per_visit` block, so any
+`redaction.json`, `partner_wer.json`, `jiwer_wer.json`, `redaction_validation_poss.json`, `leak_kinds_validation.json`. Each carries a `per_visit` block, so any
 figure here can be traced to the visits behind it. Keyed by full system name.
 
 ## Caveats that change how these read
