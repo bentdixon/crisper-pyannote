@@ -270,7 +270,7 @@ def validation_figures(validation: dict | None, kinds: dict | None,
     )))
     svg, w, h = pii_leak_svg(validation, kinds, legend=True)
     out.append(("pii-leak-rate", *titled(
-        "Identifiers left in the clear", "lower is better",
+        "Identifiers leaked", "lower is better",
         svg, w, h,
         "A leak is a gold span whose surface form survives verbatim in the output -- "
         "the privacy question asked directly, with no alignment step to trust. The "

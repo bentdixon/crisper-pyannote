@@ -38,6 +38,10 @@ TEXT = "#0b0b0b"
 MUTED = "#5a5a56"
 MUTED_DARK = "#3a3a37"
 WINNER = "#1baf7a"
+# Ink for legend swatches that key an opacity ramp rather than a system.
+# Near-black fades to a row of greys, which reads as "no colour here" and
+# not as "these are the same colour at three strengths".
+RAMP_INK = "#3f4a7a"
 
 # The system registry lives in systems.py so a name is defined once and
 # rendered the same way in every console table, JSON file, CSV and chart.
@@ -2336,9 +2340,11 @@ def pii_f1_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
     tail = 0
     if legend:
         items = [
-            ("recall", TEXT, "share of the human-marked spans the system redacted"),
-            ("precision", MUTED, "share of its redactions that landed on a marked span"),
-            ("F1", GRIDLINE, "their harmonic mean"),
+            ("recall", _fade(RAMP_INK, 1.0),
+             "share of the human-marked spans the system redacted"),
+            ("precision", _fade(RAMP_INK, 0.62),
+             "share of its redactions that landed on a marked span"),
+            ("F1", _fade(RAMP_INK, 0.34), "their harmonic mean"),
         ]
         block, tail = swatch_legend(items, width - pad_l, height - pad_b + 26, columns=1)
         out.append(f'<g transform="translate({pad_l - 34},0)">{block}</g>')
@@ -2516,7 +2522,7 @@ def pii_leak_svg(data: dict | None, kinds: dict | None = None,
     tail = 0
     if legend:
         block, tail = swatch_legend(
-            [(k, _fade(TEXT, opacity[k]), "") for k in order],
+            [(k, _fade(RAMP_INK, opacity[k]), "") for k in order],
             width - pad_l, height - pad_b + 26, columns=3,
         )
         out.append(f'<g transform="translate({pad_l - 34},0)">{block}</g>')
