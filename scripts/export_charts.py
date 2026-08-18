@@ -45,6 +45,9 @@ from plot_results import (  # noqa: E402
     metrics_for,
     quartiles,
     exposure_svg,
+    pii_confusion_svg,
+    pii_f1_svg,
+    pii_leak_svg,
     leak_type_svg,
     redaction_svg,
     taxonomy_svg,
@@ -234,6 +237,53 @@ def titled(title: str, subtitle: str, svg: str, width: int, height: int,
     return "".join(parts), total_w, total_h
 
 
+def validation_figures(validation: dict | None, kinds: dict | None,
+                       clean: bool = False) -> list[tuple[str, str, int, int]]:
+    """The three PII figures for a redaction validation run."""
+    out = []
+    svg, w, h = pii_f1_svg(validation, legend=True)
+    if not svg:
+        return out
+    visits = max((e.get("visits", 0) for e in validation["aggregate"].values()), default=0)
+    gold = max((e.get("gold_spans", 0) for e in validation["aggregate"].values()), default=0)
+    out.append(("pii-detection-f1", *titled(
+        "PII span detection", "higher is better",
+        svg, w, h,
+        f"Span-level detection against the human transcripts' own annotation, over "
+        f"{visits} transcripts and {gold} gold spans, each scored on the span the "
+        f"transcript covers. Recall is the share of marked spans a system redacted; "
+        f"precision the share of its redactions that landed on one. Precision is a "
+        f"lower bound throughout: an identifier nobody marked counts against the "
+        f"system that caught it, and only some transcripts carry any annotation.",
+        clean=clean,
+    )))
+    svg, w, h = pii_confusion_svg(validation)
+    out.append(("pii-confusion", *titled(
+        "Where each redactor's decisions land", "counts, not rates",
+        svg, w, h,
+        "The three outcomes span detection admits. There is no true-negative cell: "
+        "the annotation records where PII is, never where it is not, so the negatives "
+        "are every other token in the transcript and any accuracy figure built on "
+        "them would be dominated by ordinary speech. Cells are shaded within their "
+        "own column, because caught, missed and extra are on different scales.",
+        clean=clean,
+    )))
+    svg, w, h = pii_leak_svg(validation, kinds, legend=True)
+    out.append(("pii-leak-rate", *titled(
+        "Identifiers left in the clear", "lower is better",
+        svg, w, h,
+        "A leak is a gold span whose surface form survives verbatim in the output -- "
+        "the privacy question asked directly, with no alignment step to trust. The "
+        "split is by the shape of the leaked text, not by a verdict on it: the "
+        "annotation marks material that identifies nobody, so a bare month or a "
+        "sentence about religion counts as a leak while being harmless. The dark "
+        "segment is single words, which is where a name would be and what still "
+        "needs a human read.",
+        clean=clean,
+    )))
+    return out
+
+
 def extra_figures(data: dict, mono: dict | None, stereo: dict | None,
                   redaction: dict | None, taxonomy: dict | None = None,
                   clean: bool = False, leaks: dict | None = None,
@@ -340,6 +390,14 @@ def main() -> int:
         help="partner_wer.json from score_partner_wer.py; adds their chart",
     )
     parser.add_argument(
+        "--validation", default=None,
+        help="redaction results for a validation run; adds the three PII figures",
+    )
+    parser.add_argument(
+        "--leak-kinds", default=None,
+        help="leak_kinds.json from classify_leaks.py; splits the leak bars by shape",
+    )
+    parser.add_argument(
         "--jiwer", default=None,
         help="jiwer_wer.json from score_jiwer_wer.py; adds the third WER chart",
     )
@@ -431,7 +489,13 @@ def main() -> int:
 
         emit(slug(title), title, svg, width, height)
 
-    for name, svg, width, height in extra_figures(data, mono, stereo, redaction, taxonomy, clean=args.clean, leaks=leaks, exposure=exposure):
+    validation = load_results(args.validation)
+    kinds = json.loads(Path(args.leak_kinds).read_text()) if args.leak_kinds else None
+    for name, svg, width, height in (
+        extra_figures(data, mono, stereo, redaction, taxonomy, clean=args.clean,
+                      leaks=leaks, exposure=exposure)
+        + validation_figures(validation, kinds, clean=args.clean)
+    ):
         emit(name, name.replace('-', ' '), svg, width, height)
 
     for path in written:

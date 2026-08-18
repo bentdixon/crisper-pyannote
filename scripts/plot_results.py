@@ -2217,3 +2217,272 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+# --- PII redaction figures ---------------------------------------------------
+#
+# Built for the validation run, where several protocol variants are scored on
+# one subset, so they take the results dict directly rather than the report's
+# merged aggregate.
+
+def _redaction_rows(data: dict | None):
+    """Registered systems present in a redaction results file, in registry order."""
+    if not data:
+        return []
+    aggregate = data.get("aggregate", {})
+    rows = []
+    for name, parts, colour, _ in SYSTEMS:
+        stats = registry.entry_of(aggregate, name)
+        if stats:
+            rows.append((name, parts, colour, stats))
+    return rows
+
+
+def pii_f1_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
+    """Recall, precision and F1 per system, as three bars sharing a colour.
+
+    One bar each rather than F1 alone: F1 hides which way a system is wrong, and
+    on this corpus the two protocols differ precisely in that -- one finds more
+    spans, the other marks fewer things that were never gold.
+    """
+    rows = _redaction_rows(data)
+    if not rows:
+        return "", 0, 0
+
+    series = [("recall", "recall", 1.0), ("precision", "precision", 0.62),
+              ("F1", "f1", 0.34)]
+    bar_h, bar_gap = 11, 3
+    line_h = 14
+    max_lines = max(len(p) for _, p, _, _ in rows)
+    row_h = max(len(series) * (bar_h + bar_gap), max_lines * line_h + 6)
+    gap, pad_l, pad_r, pad_t, pad_b = 16, 250, 54, 22, 30
+    plot_w = 330
+    height = pad_t + len(rows) * (row_h + gap) + pad_b
+    width = pad_l + plot_w + pad_r
+
+    out = [
+        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+        f'role="img" aria-label="PII span detection: recall, precision and F1">'
+    ]
+    for fraction in (0.25, 0.5, 0.75, 1.0):
+        gx = pad_l + plot_w * fraction
+        out.append(
+            f'<line x1="{gx:.1f}" y1="{pad_t - 4}" x2="{gx:.1f}" y2="{height - pad_b}" '
+            f'stroke="{GRIDLINE}" stroke-width="1"/>'
+            f'<text x="{gx:.1f}" y="{height - pad_b + 14}" text-anchor="middle" '
+            f'class="tick">{fraction * 100:.0f}%</text>'
+        )
+
+    best = max((s.get("f1") or 0) for _, _, _, s in rows)
+    for index, (name, label_parts, colour, stats) in enumerate(rows):
+        y = pad_t + index * (row_h + gap)
+        block = len(label_parts) * line_h
+        first = y + (row_h - block) / 2 + line_h - 4
+        for line_index, component in enumerate(label_parts):
+            suffix = " +" if line_index < len(label_parts) - 1 else ""
+            out.append(
+                f'<text x="{pad_l - 14}" y="{first + line_index * line_h:.1f}" '
+                f'text-anchor="end" class="cat">{escape(component + suffix)}</text>'
+            )
+        top = y + (row_h - len(series) * (bar_h + bar_gap)) / 2
+        for series_index, (label, key, opacity) in enumerate(series):
+            value = stats.get(key) or 0.0
+            by = top + series_index * (bar_h + bar_gap)
+            out.append(
+                f'<rect x="{pad_l}" y="{by:.1f}" width="{plot_w * value:.1f}" '
+                f'height="{bar_h}" fill="{colour}" opacity="{opacity}" rx="1.5"/>'
+                f'<text x="{pad_l + plot_w * value + 6:.1f}" y="{by + bar_h - 2:.1f}" '
+                f'class="val">{value * 100:.1f}</text>'
+            )
+        if (stats.get("f1") or 0) == best:
+            out.append(
+                f'<circle cx="{pad_l - 6}" cy="{y + row_h / 2:.1f}" r="4" fill="{WINNER}"/>'
+            )
+
+    tail = 0
+    if legend:
+        items = [
+            ("recall", TEXT, "share of the human-marked spans the system redacted"),
+            ("precision", MUTED, "share of its redactions that landed on a marked span"),
+            ("F1", GRIDLINE, "their harmonic mean"),
+        ]
+        block, tail = swatch_legend(items, width - pad_l, height - pad_b + 26, columns=1)
+        out.append(f'<g transform="translate({pad_l - 34},0)">{block}</g>')
+        height += tail + 12
+        out[0] = (
+            f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+            f'role="img" aria-label="PII span detection: recall, precision and F1">'
+        )
+    out.append("</svg>")
+    return "".join(out), width, height
+
+
+def pii_confusion_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
+    """Per-system counts as a matrix, because span detection has no true negatives.
+
+    A 2x2 confusion matrix needs a count of correctly-unredacted spans, and there
+    is no such quantity here: the gold marks where PII is, never where it is not,
+    so the negatives are every other token in the transcript. The three cells
+    that do exist are drawn as a matrix and the fourth is named as undefined,
+    rather than being filled with a number that would flatter every system.
+    """
+    rows = _redaction_rows(data)
+    if not rows:
+        return "", 0, 0
+
+    columns = [
+        ("caught", "true_positives", "gold spans redacted"),
+        ("missed", "false_negatives", "gold spans left in the clear"),
+        ("extra", "false_positives", "redactions on unmarked text"),
+    ]
+    cell_w, cell_h, cell_gap = 96, 34, 6
+    line_h = 14
+    max_lines = max(len(p) for _, p, _, _ in rows)
+    row_h = max(cell_h, max_lines * line_h + 6)
+    pad_l, pad_r, pad_t, pad_b = 250, 30, 46, 34
+    width = pad_l + len(columns) * (cell_w + cell_gap) + pad_r
+    height = pad_t + len(rows) * (row_h + cell_gap) + pad_b
+
+    peak = {
+        key: max((r[3].get(key) or 0) for r in rows) or 1
+        for _, key, _ in columns
+    }
+
+    out = [
+        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+        f'role="img" aria-label="PII span detection counts by system">'
+    ]
+    for column_index, (title, _, _) in enumerate(columns):
+        cx = pad_l + column_index * (cell_w + cell_gap) + cell_w / 2
+        out.append(
+            f'<text x="{cx:.1f}" y="{pad_t - 24}" text-anchor="middle" class="cat">'
+            f'{escape(title)}</text>'
+        )
+    out.append(
+        f'<text x="{width - pad_r}" y="{pad_t - 24}" text-anchor="end" class="tick">'
+        f'of {rows[0][3].get("gold_spans", 0)} gold spans</text>'
+    )
+
+    for index, (name, label_parts, colour, stats) in enumerate(rows):
+        y = pad_t + index * (row_h + cell_gap)
+        block = len(label_parts) * line_h
+        first = y + (row_h - block) / 2 + line_h - 4
+        for line_index, component in enumerate(label_parts):
+            suffix = " +" if line_index < len(label_parts) - 1 else ""
+            out.append(
+                f'<text x="{pad_l - 14}" y="{first + line_index * line_h:.1f}" '
+                f'text-anchor="end" class="cat">{escape(component + suffix)}</text>'
+            )
+        for column_index, (_, key, _) in enumerate(columns):
+            value = stats.get(key) or 0
+            x = pad_l + column_index * (cell_w + cell_gap)
+            # Shade by the column's own maximum: the three quantities are on
+            # different scales and a shared one would wash out the misses.
+            shade = 0.14 + 0.5 * (value / peak[key])
+            out.append(
+                f'<rect x="{x}" y="{y + (row_h - cell_h) / 2:.1f}" width="{cell_w}" '
+                f'height="{cell_h}" rx="3" fill="{colour}" opacity="{shade:.2f}"/>'
+                f'<text x="{x + cell_w / 2:.1f}" y="{y + row_h / 2 + 5:.1f}" '
+                f'text-anchor="middle" class="cat">{value}</text>'
+            )
+
+    out.append(
+        f'<text x="{pad_l}" y="{height - pad_b + 20}" class="tick">'
+        f'no true-negative cell: the annotation marks where PII is, never where '
+        f'it is not</text></svg>'
+    )
+    return "".join(out), width, height
+
+
+def pii_leak_svg(data: dict | None, kinds: dict | None = None,
+                 legend: bool = False) -> tuple[str, int, int]:
+    """Leaked spans per system, split by what shape the leaked text is.
+
+    The leak rate is the number a privacy reviewer asks for, but a leak is any
+    gold span whose surface survives, and the braces mark material that does not
+    identify anyone -- a bare month, a sentence about religion. Splitting the bar
+    by shape keeps the headline honest: the dark segment is what still needs a
+    human to look at it, the pale segments are shapes no name takes.
+    """
+    rows = _redaction_rows(data)
+    if not rows:
+        return "", 0, 0
+
+    order = ["single word", "two or three words", "longer phrase", "month or date", "number"]
+    opacity = {"single word": 1.0, "two or three words": 0.55, "longer phrase": 0.42,
+               "month or date": 0.28, "number": 0.2}
+
+    line_h = 14
+    max_lines = max(len(p) for _, p, _, _ in rows)
+    row_h = max(26, max_lines * line_h + 6)
+    gap, pad_l, pad_r, pad_t, pad_b = 16, 250, 96, 22, 30
+    plot_w = 300
+    height = pad_t + len(rows) * (row_h + gap) + pad_b
+    width = pad_l + plot_w + pad_r
+
+    def counts_for(name: str, stats: dict) -> list[tuple[str, int]]:
+        entry = registry.entry_of(kinds or {}, name) or {}
+        found = entry.get("kinds") or {}
+        if found:
+            return [(k, found[k]) for k in order if found.get(k)]
+        return [("single word", stats.get("leaked") or 0)]
+
+    peak = max(
+        max((s.get("leaked") or 0) for _, _, _, s in rows),
+        1,
+    )
+    out = [
+        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+        f'role="img" aria-label="Leaked identifiers by system">'
+    ]
+    for fraction in (0.5, 1.0):
+        gx = pad_l + plot_w * fraction
+        out.append(
+            f'<line x1="{gx:.1f}" y1="{pad_t - 4}" x2="{gx:.1f}" y2="{height - pad_b}" '
+            f'stroke="{GRIDLINE}" stroke-width="1"/>'
+            f'<text x="{gx:.1f}" y="{height - pad_b + 14}" text-anchor="middle" '
+            f'class="tick">{peak * fraction:.0f}</text>'
+        )
+
+    for index, (name, label_parts, colour, stats) in enumerate(rows):
+        y = pad_t + index * (row_h + gap)
+        block = len(label_parts) * line_h
+        first = y + (row_h - block) / 2 + line_h - 4
+        for line_index, component in enumerate(label_parts):
+            suffix = " +" if line_index < len(label_parts) - 1 else ""
+            out.append(
+                f'<text x="{pad_l - 14}" y="{first + line_index * line_h:.1f}" '
+                f'text-anchor="end" class="cat">{escape(component + suffix)}</text>'
+            )
+        x = pad_l
+        cy = y + (row_h - 14) / 2
+        for kind_name, count in counts_for(name, stats):
+            w = plot_w * count / peak
+            out.append(
+                f'<rect x="{x:.1f}" y="{cy:.1f}" width="{max(w, 0.6):.1f}" height="14" '
+                f'fill="{colour}" opacity="{opacity.get(kind_name, 0.5)}"/>'
+            )
+            x += w
+        rate = stats.get("leak_rate")
+        testable = stats.get("leak_testable") or 0
+        label = f'{stats.get("leaked") or 0} of {testable}'
+        if rate is not None:
+            label += f'  ({rate * 100:.1f}%)'
+        out.append(
+            f'<text x="{x + 8:.1f}" y="{cy + 11:.1f}" class="val">{label}</text>'
+        )
+
+    tail = 0
+    if legend:
+        block, tail = swatch_legend(
+            [(k, MUTED_DARK if opacity[k] > 0.5 else MUTED, "") for k in order],
+            width - pad_l, height - pad_b + 26, columns=3,
+        )
+        out.append(f'<g transform="translate({pad_l - 34},0)">{block}</g>')
+        height += tail + 12
+        out[0] = (
+            f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+            f'role="img" aria-label="Leaked identifiers by system">'
+        )
+    out.append("</svg>")
+    return "".join(out), width, height
