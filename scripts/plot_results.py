@@ -2425,8 +2425,10 @@ def pii_confusion_svg(data: dict | None, legend: bool = False) -> tuple[str, int
         'never where it is not',
     ]
     for note_index, note in enumerate(notes):
+        # Anchored at the figure's left margin, not the label column: starting
+        # them at pad_l left 336px for an 80-character line and cut both.
         out.append(
-            f'<text x="{pad_l}" y="{height - pad_b + 20 + note_index * 14}" '
+            f'<text x="2" y="{height - pad_b + 20 + note_index * 14}" '
             f'class="tick">{escape(note)}</text>'
         )
     out.append("</svg>")
