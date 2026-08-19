@@ -121,7 +121,9 @@ def turn_rows(turns: list[dict], words: list[dict]) -> list[dict]:
 
         inside = [w for w in timed if w[1] > start and w[0] < end]
         speaker_words = [w for w in inside if matched is not None and w[2] == matched]
-        speaker = str(turn["speaker"]).upper()
+        # Transcripts write the tag with its colon ("INTERVIEWER:"), and some
+        # number the speakers instead of naming them.
+        speaker = str(turn["speaker"]).upper().rstrip(":")
 
         rows.append({
             "speaker": speaker if speaker in ROLE_LABELS else f"unnamed ({speaker})",
@@ -135,6 +137,9 @@ def turn_rows(turns: list[dict], words: list[dict]) -> list[dict]:
             "hyp_words": len(inside),
             "lost_entirely": not inside,
             "lost_to_speaker": not speaker_words,
+            # Words present but none of them this speaker's: the speech was
+            # transcribed and the attribution was not.
+            "wrong_speaker": bool(inside) and not speaker_words,
         })
         previous_length = end - start
     return rows
@@ -155,15 +160,22 @@ def summarize(rows: list[dict]) -> dict:
         }
 
     entry = rates(rows)
-    for field, order in (
-        ("length_bucket", [bucket(0, LENGTH_BUCKETS)]),
-        ("previous_bucket", ["first turn"]),
-        ("speaker", []),
-    ):
+    for field in ("length_bucket", "previous_bucket", "speaker"):
         keys = sorted({r[field] for r in rows})
         entry[f"by_{field}"] = {
             key: rates([r for r in rows if r[field] == key]) for key in keys
         }
+
+    # The two splits confound each other: short turns are lost most, and short
+    # turns are not evenly spread across the previous-length buckets. Holding
+    # length fixed at the shortest bucket is what separates "brief turns are
+    # fragile" from "brief turns spoken into someone else's long stretch are
+    # fragile" -- only the second is an overlap story.
+    short = [r for r in rows if r["length_bucket"] == f"<{LENGTH_BUCKETS[0]:g}s"]
+    entry["short_turns_by_previous"] = {
+        key: rates([r for r in short if r["previous_bucket"] == key])
+        for key in sorted({r["previous_bucket"] for r in short})
+    }
     return entry
 
 
@@ -269,8 +281,11 @@ def main(argv: list[str] | None = None) -> int:
     for name, entry in aggregate.items():
         print()
         print(f"{registry.label_of(name)} -- turns never transcribed")
-        for field in ("by_length_bucket", "by_previous_bucket", "by_speaker"):
-            print(f"  {field[3:].replace('_', ' ')}")
+        for field in (
+            "by_length_bucket", "by_previous_bucket", "by_speaker",
+            "short_turns_by_previous",
+        ):
+            print(f"  {field.removeprefix('by_').replace('_', ' ')}")
             for key, stats in entry[field].items():
                 print(
                     f"    {key:<20} {stats['lost_entirely_rate']:.4f}"
@@ -293,7 +308,7 @@ def main(argv: list[str] | None = None) -> int:
         fields = [
             "visit", "system", "speaker", "length", "length_bucket",
             "previous_bucket", "ref_words", "hyp_words", "lost_entirely",
-            "lost_to_speaker",
+            "lost_to_speaker", "wrong_speaker",
         ]
         with open(args.csv, "w", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields)
