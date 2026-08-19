@@ -2359,10 +2359,10 @@ def pii_f1_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
     if legend:
         items = [
             ("found", METRIC_COLOURS["recall"],
-             "of everything a transcriber marked, how much the system blanked out"),
+             "of what a transcriber marked, how much was blanked out"),
             ("correct", METRIC_COLOURS["precision"],
-             "of everything the system blanked out, how much had been marked"),
-            ("combined", METRIC_COLOURS["f1"], "the two above balanced into one number"),
+             "of what the system blanked out, how much was marked"),
+            ("combined", METRIC_COLOURS["f1"], "the two balanced into one number"),
         ]
         block, tail = swatch_legend(items, width - pad_l, height - pad_b + 26, columns=1)
         out.append(f'<g transform="translate({pad_l - 34},0)">{block}</g>')
