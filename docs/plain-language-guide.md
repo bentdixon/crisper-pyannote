@@ -222,3 +222,99 @@ The last row is a warning, not a candidate. Feeding Chirp-3's already-cleaned
 text through the disfluency step **puts the names back**: it hears the audio and
 types what was said where Chirp had written a label. It undoes de-identification
 and should not be released.
+
+---
+
+# The transcription accuracy figures
+
+Same idea, different question: not "did it hide the names" but "did it get the
+words right, and did anything go missing from the conversation".
+
+## "Word error rate" (charts say **WER**)
+
+Line the machine's transcript up against the typist's, word by word, and count
+the words it got wrong, missed, or added that were never said. Divide by how
+many words the typist wrote. Lower is better. 12% means about one word in eight
+is wrong somewhere.
+
+Two things to know before quoting it. The typists wrote down what people meant,
+tidying as they went, while the machines write down every "um" and false start,
+so a machine can be charged for words that really were spoken. And the typists
+stopped early on a third of these interviews, so we only score the part they
+covered -- otherwise the untranscribed hour counts as the machine making things
+up.
+
+**Slide line:** *Word error rate is the share of words that came out wrong. We
+only compare against the part a person actually typed up.*
+
+## "Average" versus "the typical interview"
+
+These disagree here, and the disagreement is the point. Averaged over all 269
+interviews our pipeline looks better than Google's Chirp-3, 14.3% against 17.5%.
+But interview by interview, **Chirp-3 is better on 151 of the 269 and ours on
+118**. The average is being decided by about ten interviews where Chirp-3 goes
+badly wrong -- getting more than half the words wrong -- and ours does not.
+Take those ten out and the gap shrinks from 3.2 points to 1.2.
+
+Neither number is a trick. They answer different questions: *what should I
+expect on a randomly chosen interview* (Chirp-3, slightly) and *how bad can it
+get* (Chirp-3, much worse).
+
+**Slide line:** *Chirp-3 is better on most interviews. Ours is better on
+average, because Chirp-3 fails badly on about ten of them and we do not.*
+
+## The curve chart (papers say **cumulative distribution**)
+
+Read one point at a time: "of all 269 interviews, this share came in at or below
+this error rate". A line that is higher at a given error rate is the better
+system there. The lines cross at about 13%, which is exactly the finding above
+-- one system leads on the ordinary interviews and the other leads once things
+get hard.
+
+**Slide line:** *One system wins the easy interviews, the other wins the hard
+ones. A single average per system hides that completely.*
+
+## "Lost turn"
+
+A turn is one uninterrupted stretch of one person speaking. A turn is lost when
+the system produced no word at all during the time the typist says someone was
+talking -- the sentence is simply not in the transcript.
+
+This is worth its own number because word error rate hardly notices it. A lost
+four-word question is four missing words out of five thousand, a rounding error
+in the percentage, but a reader looking at the transcript sees a question gone
+from the conversation and an answer to nothing.
+
+Across all 269 interviews, of 68,950 turns:
+
+| | turns never transcribed |
+|---|---:|
+| CrisperWhisper with pyannote 3.1 | 2.8% |
+| Google Chirp-3 | 5.8% |
+| CrisperWhisper with community-1 (ours) | 6.3% |
+| Chirp-3 put through verbatimize | 9.0% |
+
+Brief turns are the ones that vanish: under one second, our pipeline loses 17%
+of them. And they vanish most when they land in the middle of a long stretch of
+the other person talking -- a short question dropped into a long answer -- not
+when the two speakers were trading quickly.
+
+**Slide line:** *Between 3% and 9% of turns never make it into the transcript at
+all. Short interjections during someone else's long answer are the ones that
+disappear.*
+
+## "Speaker error" (charts say **DER confusion**, or **sWER**)
+
+Two different ways of asking whether the right words got attached to the right
+person. Speaker confusion is measured on the clock -- what fraction of the
+speaking time is credited to the wrong person. The speaker-aware word error rate
+pools everything one person said into a block and scores that block.
+
+The second one has a blind spot worth stating out loud: because it pools a whole
+interview's words per speaker, a lost or misattributed turn disappears into a
+five-thousand-word block. That is why the lost-turn count above exists as its
+own measure rather than being read off a speaker error rate.
+
+**Slide line:** *Speaker error says how much speech is credited to the wrong
+person. It cannot tell you whether a particular exchange survived -- that needs
+counting turns.*

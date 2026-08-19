@@ -706,6 +706,90 @@ Reported as `JiwerWER` in the report, `figures/jiwer-wer.png` and
 `tables/jiwer-wer.csv`. The per-visit key is `jiwer_wer`, deliberately not
 `wer`, so merging it cannot overwrite our own per-visit WER.
 
+### Our aggregate WER win is ten interviews, not a broad lead (2026-08-19)
+
+Per-visit jiwer WER, ours against chirp3, all 269:
+
+    ours better on 118 interviews, chirp3 better on 151
+    median paired difference          chirp3 better by 2.4 points
+    mean                              chirp3 0.175, ours 0.143
+    mean without chirp3's 10 worst    chirp3 0.155, ours 0.143
+
+So the corpus-level ranking is real but it is not a broad lead: **chirp3 wins
+the typical interview** and our mean win comes from a tail where chirp3 exceeds
+50% WER and we do not. Two figures make this the readable claim rather than a
+caveat -- `wer-head-to-head` (one sorted bar per interview) and
+`wer-distribution` (cumulative curves, which cross at about 13% WER). Both are
+built from per-visit rows in `reports/2026-08-11/data/jiwer_wer.json` by
+`headtohead_svg` / `ecdf_svg`, exported via `export_charts.py --jiwer`.
+
+Two visits run off the head-to-head scale (worst -67 points), including the
+known near-silent GA06750 file; they are drawn as wedges at the edge and
+counted in the caption rather than allowed to set the axis.
+
+### Lost turns: what sWER cannot see, and the overlap question answered
+
+`scripts/lost_turns.py` (CPU, ~90 s for six systems over 269 visits) asks per
+human turn whether any word landed inside its span (**never transcribed** -- an
+ASR loss) and whether any of those carried the matched speaker (**wrong
+speaker** -- a diarization loss). 68,950 turns:
+
+    system                        never transcribed   wrong speaker or missing
+    CW2 + pyannote 3.1                       2.82%                     14.95%
+    chirp3                                   5.82%                     22.53%
+    CW2 + community-1 (ours)                 6.35%                     25.18%
+    verbatimize                              8.96%                     24.65%
+
+**sWER is the wrong instrument for this** and no amount of fixing makes it the
+right one: it pools every word a speaker said into one stream, so a lost
+four-word turn is four deletions among five thousand words; it cannot separate
+"never transcribed" from "wrong speaker"; and comparing concatenated text says
+nothing about whether the exchange survived as an exchange.
+
+**The overlap hypothesis, as originally framed, is refuted.** Holding turn
+length fixed at under a second (the confound: short turns are lost most and are
+not evenly spread), loss by how long the *previous* turn ran:
+
+    previous turn   <1.5s    1.5-3s    3-8s     8s+
+    ours            12.1%     16.7%   17.9%   18.8%
+    chirp3           9.1%      9.4%   10.9%   13.3%
+
+Loss is *lowest* in rapid exchanges and *highest* when a brief turn lands inside
+someone else's long stretch -- the interjection-into-a-monologue case, which is
+exactly the CM02493 18:48 example. Overlap may still be the mechanism, but not
+the rapid-alternation kind the gap proxy was built to detect.
+
+Note also that ours and baseline share an ASR model and differ 2.8% against
+6.4% on never-transcribed: that gap is our silero windowing against their VAD
+segmentation, not CrisperWhisper.
+
+Figure: `lost-turns` (`lost_turn_svg`), via `export_charts.py --lost-turns`.
+
+### Zero-duration words were all UNKNOWN (fixed 2026-08-19)
+
+`merge.assign_speakers` assigns by maximum temporal overlap, and an instant
+overlaps nothing, so every word whose end equalled its start fell through to
+UNKNOWN by construction: 2,809 corpus-wide, 24% of all 11,544 UNKNOWN labels,
+zero exceptions. `asr.transcribe_windowed` produces them via
+`"end": max(word_end, word_start)`. Fixed in merge as a containment query on the
+instant -- padding the duration in asr would move every reported timestamp and
+DER with it. `fill_nearest` still decides genuine gaps, so a zero-duration word
+in a gap behaves like any other word there. Checks in `tests/test_merge.py`
+(`uv run python tests/test_merge.py`; no pytest in this environment).
+
+Bound on the effect: WER cannot move, it ignores speakers. sWER and DER can move
+by at most the 0.24% of words involved. The existing 269-visit outputs were not
+rescored -- re-deriving speakers needs diarization output the sweep did not
+keep, ~3 GPU-hours -- so published sWER/DER predate the fix by that bound.
+
+Same commit, same family: `score_visit` matched each reference speaker to at
+most one predicted speaker and **dropped the unmatched predicted streams
+entirely** rather than charging them. Our UNKNOWN bucket therefore cost nothing,
+while a system putting the same words on the wrong speaker paid for them; chirp3
+emits no UNKNOWN stream, so only we benefited. Those words are now charged to
+the reference speaker whose turns cover that moment. Old value retained as
+`swer_unmatched_dropped`, the way `swer_uncapped` is.
+
 ## PII redaction (2026-08-11)
 
 Answers the DIALOG-DeID section 2.3 question on this corpus: span-level

@@ -41,6 +41,9 @@ from plot_results import (  # noqa: E402
     escape,
     load_results,
     merge_jiwer,
+    ecdf_svg,
+    headtohead_svg,
+    lost_turn_svg,
     merge_partner,
     metrics_for,
     quartiles,
@@ -287,6 +290,65 @@ def validation_figures(validation: dict | None, kinds: dict | None,
     return out
 
 
+def tail_figures(jiwer: dict | None, lost: dict | None,
+                 clean: bool = False) -> list[tuple[str, str, int, int]]:
+    """Where the aggregate accuracy win comes from, and what a lost turn costs.
+
+    Built from the per-visit rows rather than the aggregate, because the point
+    of all three is that one number per system cannot show it.
+    """
+    out = []
+    svg, w, h = headtohead_svg(jiwer, legend=True)
+    if svg:
+        out.append(("wer-head-to-head", *titled(
+            "Which system transcribes each interview better",
+            "one bar per interview, sorted; taller is a bigger difference",
+            svg, w, h,
+            "Chirp-3 is better on most interviews, by a little. Our pipeline is "
+            "better on fewer, but on a handful of them by an enormous margin -- "
+            "interviews where Chirp-3 gets more than half the words wrong. Averages "
+            "are pulled by those few, which is why our average looks better while "
+            "the typical interview goes the other way. The last line under the "
+            "figure is the same average with Chirp-3's ten worst interviews left "
+            "out: most of the gap goes with them.",
+            clean=clean,
+        )))
+
+    svg, w, h = ecdf_svg(jiwer, legend=True)
+    if svg:
+        out.append(("wer-distribution", *titled(
+            "How many interviews come in under each error rate",
+            "further left and higher is better",
+            svg, w, h,
+            "Read it as: of all 269 interviews, what share came in at or below this "
+            "error rate. A curve that is higher is better at that error rate. The "
+            "curves cross, and that crossing is the finding: Chirp-3 leads through "
+            "the easy and ordinary interviews on the left, then flattens out on the "
+            "right because a tail of its interviews go badly wrong, while ours keep "
+            "climbing. No single average per system can show this.",
+            clean=clean,
+        )))
+
+    svg, w, h = lost_turn_svg(lost, legend=True)
+    if svg:
+        out.append(("lost-turns", *titled(
+            "Brief turns that were never transcribed at all",
+            "lower is better; only turns under one second",
+            svg, w, h,
+            "A turn counts as never transcribed when the system produced no word "
+            "anywhere inside the time the transcript says someone was speaking. "
+            "Word error rate barely notices these -- a lost four-word question is "
+            "four missing words out of five thousand -- but a reader notices "
+            "immediately, because a question has gone from the conversation. Only "
+            "turns under a second are shown, so the comparison across the groups is "
+            "not just a comparison of turn lengths. Loss is lowest when the two "
+            "speakers were trading quickly and highest when the brief turn landed "
+            "in the middle of a long stretch of the other person talking.",
+            clean=clean,
+        )))
+    return out
+
+
 def extra_figures(data: dict, mono: dict | None, stereo: dict | None,
                   redaction: dict | None, taxonomy: dict | None = None,
                   clean: bool = False, leaks: dict | None = None,
@@ -410,6 +472,10 @@ def main() -> int:
     parser.add_argument("--stereo", default=None, help="results.json for the stereo subset")
     parser.add_argument("--redaction", default=None, help="redaction.json")
     parser.add_argument("--taxonomy", default=None, help="taxonomy.json")
+    parser.add_argument(
+        "--lost-turns", default=None,
+        help="lost_turns.json from lost_turns.py; adds the lost-turn figure",
+    )
     parser.add_argument("--leaks", default=None, help="leak_by_type.json")
     parser.add_argument("--exposure", default=None, help="exposure.json")
     parser.add_argument(
@@ -436,6 +502,8 @@ def main() -> int:
     leaks = json.loads(Path(args.leaks).read_text()) if args.leaks else None
     exposure = json.loads(Path(args.exposure).read_text()) if args.exposure else None
     taxonomy = json.loads(Path(args.taxonomy).read_text()) if args.taxonomy else None
+    jiwer_data = load_results(args.jiwer) if args.jiwer else None
+    lost = json.loads(Path(args.lost_turns).read_text()) if args.lost_turns else None
     aggregate = data.get("aggregate", {})
     per_visit = data.get("per_visit", {})
     present = [n for n in aggregate]
@@ -500,6 +568,7 @@ def main() -> int:
         extra_figures(data, mono, stereo, redaction, taxonomy, clean=args.clean,
                       leaks=leaks, exposure=exposure)
         + validation_figures(validation, kinds, clean=args.clean)
+        + tail_figures(jiwer_data, lost, clean=args.clean)
     ):
         emit(name, name.replace('-', ' '), svg, width, height)
 

@@ -2555,3 +2555,330 @@ def pii_leak_svg(data: dict | None, kinds: dict | None = None,
         )
     out.append("</svg>")
     return "".join(out), width, height
+
+
+# --- where the aggregate win comes from -------------------------------------
+
+# The two systems the head-to-head compares: the incumbent and our pipeline.
+HEAD_TO_HEAD = ("chirp3", "ours")
+
+
+def _paired_wer(data: dict | None, keys=HEAD_TO_HEAD) -> list[tuple[str, float, float]]:
+    """(visit, first system's WER, second system's WER) for visits both scored."""
+    if not data:
+        return []
+    rows = []
+    for visit, entry in (data.get("per_visit") or {}).items():
+        values = [registry.entry_of(entry, key) for key in keys]
+        if any(v is None or v.get("wer") is None for v in values):
+            continue
+        rows.append((visit, float(values[0]["wer"]), float(values[1]["wer"])))
+    return rows
+
+
+def _stat_strip(rows: list[tuple[str, float, float]], keys=HEAD_TO_HEAD) -> list[str]:
+    """The four numbers that decide whether an average win is a real one."""
+    import statistics
+
+    first = [a for _, a, _ in rows]
+    second = [b for _, _, b in rows]
+    diffs = [a - b for _, a, b in rows]
+    worst = sorted(rows, key=lambda r: -r[1])[:10]
+    rest = [r for r in rows if r not in worst]
+    names = [registry.PARTS[k][0] for k in keys]
+    return [
+        f"{names[1]} better on {sum(1 for d in diffs if d > 0)} interviews, "
+        f"{names[0]} better on {sum(1 for d in diffs if d < 0)}",
+        f"typical interview: {names[0] if statistics.median(diffs) < 0 else names[1]} "
+        f"is better by {abs(statistics.median(diffs)) * 100:.1f} points",
+        f"average over all {len(rows)}: {names[0]} {statistics.fmean(first) * 100:.1f}%, "
+        f"{names[1]} {statistics.fmean(second) * 100:.1f}%",
+        f"average without {names[0]}'s ten worst interviews: "
+        f"{names[0]} {statistics.fmean(r[1] for r in rest) * 100:.1f}%, "
+        f"{names[1]} {statistics.fmean(r[2] for r in rest) * 100:.1f}%",
+    ]
+
+
+def headtohead_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
+    """One bar per interview: how much better one system did than the other.
+
+    An average hides which interviews it came from. Sorted per-interview
+    differences do not: a broad shallow band on one side is a system that wins
+    most of the time by a little, and a few tall bars on the other side are a
+    system that wins rarely by a lot. Both produce the same mean.
+
+    The scale is clipped rather than fitted to the extremes. One interview here
+    is near-silent audio where our pipeline finds 25 words in 34 minutes, and
+    letting it set the axis flattens every other bar to nothing -- the figure
+    would be a picture of one broken file. Clipped bars are drawn to the edge
+    with a marker and counted in the caption, so none of them are hidden.
+    """
+    rows = _paired_wer(data)
+    if not rows:
+        return "", 0, 0
+    keys = HEAD_TO_HEAD
+    colours = {k: c for k, _, c, _ in SYSTEMS}
+    rows = sorted(rows, key=lambda r: r[1] - r[2])
+    diffs = [a - b for _, a, b in rows]
+
+    pad_l, pad_r, pad_t, pad_b = 46, 16, 22, 30
+    plot_w, plot_h = 820, 300
+    strip = _stat_strip(rows, keys) if legend else []
+
+    high = max(diffs)
+    low = max(min(diffs), -0.30)
+    clipped = sum(1 for d in diffs if d < low)
+    if clipped:
+        strip.append(
+            f"{clipped} interview{'s' if clipped > 1 else ''} run past the bottom of "
+            f"the scale, marked with a wedge; the largest is "
+            f"{min(diffs) * 100:.0f} points"
+        )
+    height = pad_t + plot_h + pad_b + (len(strip) * 15 + 12 if strip else 0)
+    width = pad_l + plot_w + pad_r
+
+    span = high - low
+    zero_y = pad_t + high / span * plot_h
+
+    def y(value: float) -> float:
+        return pad_t + (high - max(value, low)) / span * plot_h
+
+    bar_w = plot_w / len(rows)
+    out = [
+        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+        f'role="img" aria-label="per-interview difference in word error rate">'
+    ]
+    step = 0.1
+    value = -(int(-low / step)) * step
+    while value <= high:
+        gy = round(y(value), 1)
+        out.append(
+            f'<line x1="{pad_l}" y1="{gy}" x2="{pad_l + plot_w}" y2="{gy}" '
+            f'stroke="{GRIDLINE}" stroke-width="1"/>'
+            f'<text x="{pad_l - 8}" y="{gy + 3.5}" text-anchor="end" class="tick">'
+            f'{value * 100:+.0f}</text>'
+        )
+        value = round(value + step, 6)
+
+    for index, (_visit, first, second) in enumerate(rows):
+        diff = first - second
+        x0 = pad_l + index * bar_w
+        bw = max(bar_w - 0.4, 0.6)
+        out.append(
+            f'<rect x="{x0:.2f}" y="{y(max(diff, 0.0)):.1f}" width="{bw:.2f}" '
+            f'height="{abs(y(diff) - zero_y):.1f}" '
+            f'fill="{colours[keys[1] if diff > 0 else keys[0]]}" opacity="0.85"/>'
+        )
+        if diff < low:
+            edge = pad_t + plot_h
+            out.append(
+                f'<path d="M{x0 - 2:.1f},{edge - 7} L{x0 + bw + 2:.1f},{edge - 7} '
+                f'L{x0 + bw / 2:.1f},{edge + 2} Z" fill="{colours[keys[0]]}"/>'
+            )
+
+    out.append(
+        f'<line x1="{pad_l}" y1="{zero_y:.1f}" x2="{pad_l + plot_w}" y2="{zero_y:.1f}" '
+        f'stroke="{AXIS}" stroke-width="1.2"/>'
+    )
+    # Placed in the two corners the sorted data leaves empty, so neither label
+    # sits on top of a bar.
+    out.append(
+        f'<text x="{pad_l + 6}" y="{pad_t + 26}" class="leg" fill="{colours[keys[1]]}">'
+        f'{escape(registry.PARTS[keys[1]][0])} better, by this many points</text>'
+        f'<text x="{pad_l + plot_w - 6}" y="{pad_t + plot_h - 8}" text-anchor="end" '
+        f'class="leg" fill="{colours[keys[0]]}">'
+        f'{escape(registry.PARTS[keys[0]][0])} better, by this many points</text>'
+    )
+    out.append(
+        f'<text x="{pad_l + plot_w / 2}" y="{pad_t + plot_h + 20}" text-anchor="middle" '
+        f'class="tick">each bar is one of the {len(rows)} interviews, sorted</text>'
+    )
+    for index, line in enumerate(strip):
+        out.append(
+            f'<text x="{pad_l}" y="{pad_t + plot_h + pad_b + 12 + index * 15}" '
+            f'class="leg">{escape(line)}</text>'
+        )
+    out.append("</svg>")
+    return "".join(out), width, height
+
+
+def ecdf_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
+    """Share of interviews at or below each error rate, one curve per system.
+
+    Where the curves cross is the whole argument: a system can be ahead through
+    the body of the distribution and behind in the tail, and one average per
+    system cannot show that.
+    """
+    if not data:
+        return "", 0, 0
+    series = []
+    for name, parts, colour, _ in SYSTEMS:
+        # The LLM-review arms are dropped: they are never better on any visit and
+        # their curves lie on top of the arms they review, hiding them.
+        if name.endswith("_llm"):
+            continue
+        values = sorted(
+            float(v["wer"])
+            for entry in (data.get("per_visit") or {}).values()
+            if (v := registry.entry_of(entry, name)) and v.get("wer") is not None
+        )
+        if values:
+            series.append((name, parts, colour, values))
+    if not series:
+        return "", 0, 0
+
+    pad_l, pad_r, pad_t, pad_b = 46, 16, 16, 34
+    plot_w, plot_h = 620, 300
+    rows = len(series)
+    height = pad_t + plot_h + pad_b + (rows * 15 + 12 if legend else 0)
+    width = pad_l + plot_w + pad_r
+    high = 1.0
+
+    def x(value: float) -> float:
+        return pad_l + min(value, high) / high * plot_w
+
+    def y(share: float) -> float:
+        return pad_t + (1 - share) * plot_h
+
+    out = [
+        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+        f'role="img" aria-label="cumulative share of interviews by error rate">'
+    ]
+    for step in range(0, 11, 2):
+        gx = round(x(step / 10), 1)
+        out.append(
+            f'<line x1="{gx}" y1="{pad_t}" x2="{gx}" y2="{pad_t + plot_h}" '
+            f'stroke="{GRIDLINE}" stroke-width="1"/>'
+            f'<text x="{gx}" y="{pad_t + plot_h + 15}" text-anchor="middle" '
+            f'class="tick">{step * 10}%</text>'
+        )
+        gy = round(y(step / 10), 1)
+        out.append(
+            f'<line x1="{pad_l}" y1="{gy}" x2="{pad_l + plot_w}" y2="{gy}" '
+            f'stroke="{GRIDLINE}" stroke-width="1"/>'
+            f'<text x="{pad_l - 8}" y="{gy + 3.5}" text-anchor="end" class="tick">'
+            f'{step * 10}%</text>'
+        )
+    for _name, _parts, colour, values in series:
+        points = [f"{x(values[0]):.1f},{y(0):.1f}"]
+        for index, value in enumerate(values, start=1):
+            points.append(f"{x(value):.1f},{y((index - 1) / len(values)):.1f}")
+            points.append(f"{x(value):.1f},{y(index / len(values)):.1f}")
+        out.append(
+            f'<polyline points="{" ".join(points)}" fill="none" stroke="{colour}" '
+            f'stroke-width="2" stroke-linejoin="round"/>'
+        )
+    out.append(
+        f'<text x="{pad_l + plot_w / 2}" y="{pad_t + plot_h + 30}" text-anchor="middle" '
+        f'class="tick">word error rate on one interview</text>'
+    )
+    if legend:
+        for index, (_name, parts, colour, values) in enumerate(series):
+            ly = pad_t + plot_h + pad_b + 8 + index * 15
+            out.append(
+                f'<rect x="{pad_l}" y="{ly - 8}" width="10" height="10" rx="2" '
+                f'fill="{colour}"/><text x="{pad_l + 16}" y="{ly}" class="leg">'
+                f'{escape(" + ".join(parts))} (n={len(values)})</text>'
+            )
+    out.append("</svg>")
+    return "".join(out), width, height
+
+
+def lost_turn_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
+    """Brief turns never transcribed, grouped by how long the previous turn ran.
+
+    Turn length is held fixed at the shortest bucket, because short turns are
+    lost most and are not evenly spread across the previous-length buckets.
+    What is left is the question the figure exists to answer: does a brief turn
+    disappear because the speakers were trading rapidly, or because it landed
+    inside someone else's long stretch of speech?
+    """
+    if not data:
+        return "", 0, 0
+    aggregate = data.get("aggregate", {})
+    rows = []
+    for name, parts, colour, _ in SYSTEMS:
+        stats = registry.entry_of(aggregate, name)
+        if stats and stats.get("short_turns_by_previous"):
+            rows.append((name, parts, colour, stats))
+    if not rows:
+        return "", 0, 0
+
+    buckets = [
+        key for key in ("<1.5s", "<3s", "<8s", "8s+")
+        if key in rows[0][3]["short_turns_by_previous"]
+    ]
+    labels = {
+        "<1.5s": "under 1.5s",
+        "<3s": "1.5 to 3s",
+        "<8s": "3 to 8s",
+        "8s+": "over 8s",
+    }
+
+    pad_l, pad_r, pad_t, pad_b = 46, 16, 16, 62
+    group_w, bar_gap = 132, 4
+    plot_h = 250
+    plot_w = len(buckets) * group_w
+    height = pad_t + plot_h + pad_b + (len(rows) * 15 + 12 if legend else 0)
+    # The key names two models and a rate per row, which is wider than four
+    # groups of four bars; sizing to the bars alone clips the longest name.
+    width = max(pad_l + plot_w + pad_r, 780)
+    high = max(
+        stats["short_turns_by_previous"][b]["lost_entirely_rate"]
+        for _, _, _, stats in rows for b in buckets
+    ) * 1.15
+
+    def y(value: float) -> float:
+        return pad_t + (1 - value / high) * plot_h
+
+    out = [
+        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+        f'role="img" aria-label="brief turns never transcribed by previous turn length">'
+    ]
+    for step in range(0, 6):
+        value = high * step / 5
+        gy = round(y(value), 1)
+        out.append(
+            f'<line x1="{pad_l}" y1="{gy}" x2="{pad_l + plot_w}" y2="{gy}" '
+            f'stroke="{GRIDLINE}" stroke-width="1"/>'
+            f'<text x="{pad_l - 8}" y="{gy + 3.5}" text-anchor="end" class="tick">'
+            f'{value * 100:.0f}%</text>'
+        )
+    bar_w = (group_w - bar_gap * (len(rows) + 1)) / len(rows)
+    for index, bucket_key in enumerate(buckets):
+        x0 = pad_l + index * group_w
+        for order, (_name, _parts, colour, stats) in enumerate(rows):
+            stat = stats["short_turns_by_previous"][bucket_key]
+            value = stat["lost_entirely_rate"]
+            bx = x0 + bar_gap + order * (bar_w + bar_gap)
+            out.append(
+                f'<rect x="{bx:.1f}" y="{y(value):.1f}" width="{bar_w:.1f}" '
+                f'height="{pad_t + plot_h - y(value):.1f}" fill="{colour}"/>'
+                f'<text x="{bx + bar_w / 2:.1f}" y="{y(value) - 5:.1f}" '
+                f'text-anchor="middle" class="val">{value * 100:.0f}%</text>'
+            )
+        out.append(
+            f'<text x="{x0 + group_w / 2:.1f}" y="{pad_t + plot_h + 17}" '
+            f'text-anchor="middle" class="cat">{escape(labels[bucket_key])}</text>'
+            f'<text x="{x0 + group_w / 2:.1f}" y="{pad_t + plot_h + 32}" '
+            f'text-anchor="middle" class="tick">'
+            f'{rows[0][3]["short_turns_by_previous"][bucket_key]["turns"]} turns</text>'
+        )
+    out.append(
+        f'<line x1="{pad_l}" y1="{pad_t + plot_h}" x2="{pad_l + plot_w}" '
+        f'y2="{pad_t + plot_h}" stroke="{AXIS}" stroke-width="1.2"/>'
+        f'<text x="{pad_l + plot_w / 2:.1f}" y="{pad_t + plot_h + 56}" '
+        f'text-anchor="middle" class="tick">how long the other speaker '
+        f'had been talking first</text>'
+    )
+    if legend:
+        for index, (_name, parts, colour, stats) in enumerate(rows):
+            ly = pad_t + plot_h + pad_b + 8 + index * 15
+            out.append(
+                f'<rect x="{pad_l}" y="{ly - 8}" width="10" height="10" rx="2" '
+                f'fill="{colour}"/><text x="{pad_l + 16}" y="{ly}" class="leg">'
+                f'{escape(" + ".join(parts))} -- '
+                f'{stats["lost_entirely_rate"] * 100:.1f}% of all turns lost</text>'
+            )
+    out.append("</svg>")
+    return "".join(out), width, height
