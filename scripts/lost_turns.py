@@ -76,6 +76,15 @@ from evaluate_systems import (  # noqa: E402
 
 logger = logging.getLogger("lost_turns")
 
+# How far outside a turn's annotated span a word may sit and still count as
+# that turn being transcribed. The human transcripts are annotated to roughly a
+# third of a second (measured against ASR timestamps in score_timestamps.py),
+# and turns under one second -- the bucket where loss concentrates -- are
+# shorter than three times that, so a strict inside-the-span test on them
+# measures annotation granularity as much as transcription. Without this,
+# 68% of the turns our pipeline "lost" have a word within 0.25 s of the span.
+TOLERANCE = 0.5
+
 # Upper edges, in seconds. The last bucket is everything above the last edge.
 LENGTH_BUCKETS = [1.0, 2.0, 5.0]
 PREVIOUS_BUCKETS = [1.5, 3.0, 8.0]
@@ -148,6 +157,12 @@ def turn_rows(turns: list[dict], words: list[dict]) -> list[dict]:
             "ref_words": len(str(turn["text"]).split()),
             "hyp_words": len(inside),
             "lost_entirely": not inside,
+            # The measure to quote: nothing transcribed within half a second
+            # either side, so the speech is genuinely absent rather than
+            # sitting just outside an approximate boundary.
+            "lost_beyond_tolerance": not inside and (
+                nearest is None or nearest > TOLERANCE
+            ),
             "lost_to_speaker": not speaker_words,
             # Words present but none of them this speaker's: the speech was
             # transcribed and the attribution was not.
@@ -163,12 +178,15 @@ def summarize(rows: list[dict]) -> dict:
     def rates(subset: list[dict]) -> dict:
         total = len(subset)
         entirely = sum(1 for r in subset if r["lost_entirely"])
+        beyond = sum(1 for r in subset if r["lost_beyond_tolerance"])
         speaker = sum(1 for r in subset if r["lost_to_speaker"])
         return {
             "turns": total,
             "lost_entirely": entirely,
+            "lost_beyond_tolerance": beyond,
             "lost_to_speaker": speaker,
             "lost_entirely_rate": round(entirely / total, 4) if total else None,
+            "lost_rate": round(beyond / total, 4) if total else None,
             "lost_to_speaker_rate": round(speaker / total, 4) if total else None,
         }
 
@@ -298,14 +316,13 @@ def main(argv: list[str] | None = None) -> int:
     aggregate = {name: summarize(items) for name, items in rows.items() if items}
 
     table = []
-    for name, entry in sorted(
-        aggregate.items(), key=lambda kv: kv[1]["lost_entirely_rate"]
-    ):
+    for name, entry in sorted(aggregate.items(), key=lambda kv: kv[1]["lost_rate"]):
         table.append((
             registry.label_of(name),
             [
                 ("turns", str(entry["turns"])),
-                ("never transcribed", f"{entry['lost_entirely_rate']:.4f}"),
+                (f"lost (nothing within {TOLERANCE}s)", f"{entry['lost_rate']:.4f}"),
+                ("strictly inside the span", f"{entry['lost_entirely_rate']:.4f}"),
                 ("wrong speaker or missing", f"{entry['lost_to_speaker_rate']:.4f}"),
             ],
         ))
@@ -326,7 +343,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for name, entry in aggregate.items():
         print()
-        print(f"{registry.label_of(name)} -- turns never transcribed")
+        print(f"{registry.label_of(name)} -- turns lost")
         for field in (
             "by_length_bucket", "by_previous_bucket", "by_speaker",
             "short_turns_by_previous",
@@ -334,8 +351,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {field.removeprefix('by_').replace('_', ' ')}")
             for key, stats in entry[field].items():
                 print(
-                    f"    {key:<20} {stats['lost_entirely_rate']:.4f}"
-                    f"  ({stats['lost_entirely']} of {stats['turns']})"
+                    f"    {key:<20} {stats['lost_rate']:.4f}"
+                    f"  ({stats['lost_beyond_tolerance']} of {stats['turns']})"
                 )
 
     if args.output:
@@ -354,7 +371,8 @@ def main(argv: list[str] | None = None) -> int:
         fields = [
             "visit", "system", "speaker", "length", "length_bucket",
             "previous_bucket", "ref_words", "hyp_words", "lost_entirely",
-            "lost_to_speaker", "wrong_speaker", "nearest_word",
+            "lost_to_speaker", "wrong_speaker", "lost_beyond_tolerance",
+            "nearest_word",
         ]
         with open(args.csv, "w", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields)
