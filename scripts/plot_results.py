@@ -2482,7 +2482,9 @@ def pii_leak_svg(data: dict | None, kinds: dict | None = None,
     line_h = 14
     max_lines = max(len(_label_lines(p)) for _, p, _, _ in rows)
     row_h = max(26, max_lines * line_h + 6)
-    gap, pad_l, pad_r, pad_t, pad_b = 16, 250, 96, 22, 30
+    # Right margin fits the longest count label ('197 of 306 checkable (64.4%)')
+    # sitting past the end of the longest bar.
+    gap, pad_l, pad_r, pad_t, pad_b = 16, 250, 170, 22, 30
     plot_w = 300
     height = pad_t + len(rows) * (row_h + gap) + pad_b
     width = pad_l + plot_w + pad_r
