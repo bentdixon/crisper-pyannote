@@ -10,6 +10,10 @@ with "start" and "end") is treated as one transcript segment.
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 def assign_speakers(
     diarization_segments: list[dict],
@@ -18,13 +22,27 @@ def assign_speakers(
 ) -> list[dict]:
     """Assign a speaker to each transcript segment by maximum overlap.
 
-    The loop body below follows the tutorial code exactly. Segments with no
-    overlapping diarization segment get the nearest speaker (by midpoint
-    distance) when fill_nearest is true, otherwise "UNKNOWN".
+    The loop body below follows the tutorial code exactly, with one addition:
+    a segment of zero duration is resolved by containment instead of overlap.
+    Overlap with an instant is always zero, so a word whose end equals its
+    start could never match any speaker and fell through to "UNKNOWN" by
+    construction -- 2809 words corpus-wide, 24% of every UNKNOWN label, with
+    no exceptions. CrisperWhisper emits those timestamps for very short words
+    and transcribe_windowed preserves the equality. The instant is instead
+    located inside the diarization timeline, which is what a duration-zero
+    word means; the fix lives here rather than in the ASR because padding the
+    duration there would move every downstream timestamp and DER with it.
+
+    Segments matching no diarization segment at all get the nearest speaker
+    (by midpoint distance) when fill_nearest is true, otherwise "UNKNOWN".
+    A zero-duration word falling in a genuine diarization gap is treated the
+    same as any other word there, so the flag still decides that case.
 
     Mutates and returns transcript_segments, adding a "speaker" key to each.
     """
     diarization_segments = sorted(diarization_segments, key=lambda x: x["start"])
+    degenerate = 0
+    degenerate_placed = 0
 
     for seg in transcript_segments:
         seg_start = seg.get("start", 0.0)
@@ -43,6 +61,20 @@ def assign_speakers(
             seg["speaker"] = max(speaker_overlap.items(), key=lambda x: x[1])[0]
             continue
 
+        if seg_end <= seg_start:
+            degenerate += 1
+            containing = [
+                dia
+                for dia in diarization_segments
+                if dia["start"] <= seg_start <= dia["end"]
+            ]
+            if containing:
+                # Ties (an instant on a shared boundary) go to the earlier
+                # segment, matching the sort order the overlap loop uses.
+                seg["speaker"] = containing[0]["speaker"]
+                degenerate_placed += 1
+                continue
+
         if fill_nearest and diarization_segments:
             midpoint = (seg_start + seg_end) / 2
             nearest = min(
@@ -53,6 +85,13 @@ def assign_speakers(
             continue
 
         seg["speaker"] = "UNKNOWN"
+
+    if degenerate:
+        logger.info(
+            "zero-duration words: %d, placed by containment: %d",
+            degenerate,
+            degenerate_placed,
+        )
 
     return transcript_segments
 

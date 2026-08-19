@@ -156,6 +156,99 @@ def predicted_streams(words: list[dict]) -> dict[str, dict]:
     return {k: {"text": " ".join(v["text"]), "spans": v["spans"]} for k, v in streams.items()}
 
 
+def reassign_unmatched(
+    words: list[dict],
+    reference: dict[str, dict],
+    mapping: dict[str, str | None],
+) -> tuple[list[dict], int, int]:
+    """Fold hypothesis speakers nobody matched into the ones that did match.
+
+    The Hungarian assignment pairs each reference speaker with at most one
+    predicted speaker, so a system emitting more speakers than the transcript
+    has -- our UNKNOWN bucket for words in diarization gaps, or Chirp's
+    occasional third label -- had those words silently dropped from sWER. They
+    were not scored as errors; they were not scored at all. On the 18:00-19:10
+    slice of CM02493/day0001 three of our words sat in the UNKNOWN stream and
+    cost nothing, while a system that had put the same words on the wrong
+    speaker would have been charged for them.
+
+    Each such word is charged to the reference speaker whose turns cover that
+    moment (falling back to the nearest turn), by relabelling it to that
+    speaker's matched prediction. It lands in the right stream in time order,
+    so it scores as a substitution or an insertion where it stands rather than
+    as a block appended to the end.
+
+    Returns the relabelled words plus counts of the streams and words moved.
+    """
+    matched = {h for h in mapping.values() if h is not None}
+    if not matched:
+        return words, 0, 0
+    owner = {r: h for r, h in mapping.items() if h is not None}
+    if not owner:
+        return words, 0, 0
+
+    orphans = {
+        w.get("speaker") or "UNKNOWN"
+        for w in words
+        if (w.get("speaker") or "UNKNOWN") not in matched
+    }
+    if not orphans:
+        return words, 0, 0
+
+    moved = 0
+    out = []
+    for word in words:
+        speaker = word.get("speaker") or "UNKNOWN"
+        if speaker in matched or word.get("start") is None or word.get("end") is None:
+            out.append(word)
+            continue
+        start = float(word["start"])
+        end = max(float(word["end"]), start)
+        best = max(
+            owner,
+            key=lambda r: (
+                overlap_seconds([(start, end)], reference[r]["spans"]),
+                -min(
+                    min(abs(start - a), abs(start - b))
+                    for a, b in reference[r]["spans"]
+                ),
+            ),
+        )
+        out.append({**word, "speaker": owner[best]})
+        moved += 1
+    return out, len(orphans), moved
+
+
+def score_streams(
+    reference: dict[str, dict],
+    hypothesis: dict[str, dict],
+    mapping: dict[str, str | None],
+) -> tuple[list[float], list[float], list[float]]:
+    """Per-reference-stream WER (capped and raw) and QTP for one alignment."""
+    capped: list[float] = []
+    uncapped: list[float] = []
+    qtps: list[float] = []
+    for speaker, matched in mapping.items():
+        ref_text = normalize(reference[speaker]["text"])
+        hyp_text = normalize(hypothesis[matched]["text"]) if matched in hypothesis else ""
+        if not ref_text:
+            continue
+        # An unmatched reference stream is a total miss, not a skip.
+        raw = jiwer.process_words(ref_text, hyp_text or "*").wer if hyp_text else 1.0
+        # Capped at 1.0, because the uncapped metric charged a bad match without
+        # bound while charging a total miss exactly 1.0. On
+        # CM05540/day0082_session001 our pipeline matched a 1-word reference
+        # stream to its 88-word UNKNOWN bucket and scored 88.0, while a system
+        # emitting only two streams left the same phantom unmatched and paid
+        # 1.0 -- a 30x sWER difference that measured stream count, not speaker
+        # attribution. Emitting an extra stream must not cost more than losing
+        # a speaker entirely.
+        capped.append(min(raw, 1.0))
+        uncapped.append(raw)
+        qtps.append(qtp_score(ref_text, hyp_text))
+    return capped, uncapped, qtps
+
+
 def diarization_spans(words: list[dict]) -> dict[str, dict]:
     """Word list -> speaker spans built by the reference's own tiling rule.
 
@@ -282,26 +375,20 @@ def score_visit(turns: list[dict], words: list[dict], legacy_der: bool = False) 
         phantom_streams = 0
 
     mapping = align_streams(scored_reference, hypothesis)
-    stream_wers = []
-    stream_wers_uncapped = []
-    stream_qtps = []
-    for speaker, matched in mapping.items():
-        ref_text = normalize(scored_reference[speaker]["text"])
-        hyp_text = normalize(hypothesis[matched]["text"]) if matched else ""
-        if not ref_text:
-            continue
-        # An unmatched reference stream is a total miss, not a skip.
-        raw = jiwer.process_words(ref_text, hyp_text or "*").wer if hyp_text else 1.0
-        # Capped at 1.0, because the uncapped metric charged a bad match without
-        # bound while charging a total miss exactly 1.0. On the visit above, our
-        # pipeline matched that 1-word reference stream to its 88-word UNKNOWN
-        # bucket and scored 88.0, while a system emitting only two streams left
-        # the same phantom unmatched and paid 1.0 -- a 30x sWER difference that
-        # measured stream count, not speaker attribution. Emitting an extra
-        # stream must not cost more than losing a speaker entirely.
-        stream_wers.append(min(raw, 1.0))
-        stream_wers_uncapped.append(raw)
-        stream_qtps.append(qtp_score(ref_text, hyp_text))
+
+    # Scored twice: once as the metric used to stand, dropping predicted
+    # speakers the assignment could not match, and once with those words
+    # charged to the reference speaker who was talking at the time. The former
+    # is retained as swer_unmatched_dropped so the correction stays auditable.
+    dropped_wers, _, _ = score_streams(scored_reference, hypothesis, mapping)
+
+    repaired_words, unmatched_hyp_streams, unmatched_hyp_words = reassign_unmatched(
+        words, reference, mapping
+    )
+    repaired = predicted_streams(repaired_words) if unmatched_hyp_words else hypothesis
+    stream_wers, stream_wers_uncapped, stream_qtps = score_streams(
+        scored_reference, repaired, mapping
+    )
 
     # DER on granularity-matched spans (see diarization_spans), reported with
     # its confusion component broken out: confusion alone is the pure
@@ -353,6 +440,9 @@ def score_visit(turns: list[dict], words: list[dict], legacy_der: bool = False) 
         # correction stays auditable rather than only living in the commit log.
         "swer_uncapped": float(np.mean(stream_wers_uncapped)) if stream_wers_uncapped else None,
         "swer_streams": len(stream_wers),
+        "swer_unmatched_dropped": float(np.mean(dropped_wers)) if dropped_wers else None,
+        "unmatched_hyp_streams": unmatched_hyp_streams,
+        "unmatched_hyp_words": unmatched_hyp_words,
         "phantom_streams": phantom_streams,
         "der": der,
         "der_confusion": der_confusion,
@@ -603,6 +693,12 @@ def main(argv: list[str] | None = None) -> int:
             "WER_no_ins": mean([r.get("wer_no_ins") for r in results]),
             "sWER": mean([r["swer"] for r in results]),
             "sWER_uncapped": mean([r.get("swer_uncapped") for r in results]),
+            "sWER_unmatched_dropped": mean(
+                [r.get("swer_unmatched_dropped") for r in results]
+            ),
+            "unmatched_hyp_words": sum(
+                r.get("unmatched_hyp_words", 0) for r in results
+            ),
             "phantom_streams": sum(r.get("phantom_streams", 0) for r in results),
             "DER": mean([r["der"] for r in results]),
             "DER_confusion": mean([r.get("der_confusion") for r in results]),
@@ -653,6 +749,13 @@ def main(argv: list[str] | None = None) -> int:
                 "Phantom counts differ between systems (%s) -- the reference "
                 "filter is supposed to be system-independent", phantoms,
             )
+
+    orphaned = {n: s.get("unmatched_hyp_words", 0) for n, s in aggregate.items()}
+    if any(orphaned.values()):
+        logger.info(
+            "Predicted-speaker words charged to the nearest transcript speaker "
+            "instead of being dropped from sWER: %s", orphaned,
+        )
 
     if args.output:
         # Keyed by the full system name, not the short CLI identifier: the JSON
