@@ -52,7 +52,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import collections
 import csv
+import re
 import json
 import logging
 import sys
@@ -84,6 +86,18 @@ logger = logging.getLogger("lost_turns")
 # measures annotation granularity as much as transcription. Without this,
 # 68% of the turns our pipeline "lost" have a word within 0.25 s of the span.
 TOLERANCE = 0.5
+
+# Everything the reference and the hypothesis can be compared on: words, with
+# case, punctuation and the transcripts' bracketed markup ([inaudible]) and
+# brace-wrapped identifiers ({isaiah}) removed. CrisperWhisper writes filled
+# pauses as [UM] and Chirp writes "um", so bracketed tokens have to go from
+# both sides or the comparison measures notation.
+TOKEN = re.compile(r"[a-z0-9']+")
+
+
+def content_tokens(text: str) -> list[str]:
+    text = re.sub(r"\[[^\]]*\]", " ", text.lower())
+    return TOKEN.findall(text.replace("{", " ").replace("}", " "))
 
 # Upper edges, in seconds. The last bucket is everything above the last edge.
 LENGTH_BUCKETS = [1.0, 2.0, 5.0]
@@ -146,8 +160,35 @@ def turn_rows(turns: list[dict], words: list[dict]) -> list[dict]:
                 min(max(start - w[1], w[0] - end, 0.0) for w in timed), 3
             )
 
+        # What the reader actually notices: not "was anything transcribed near
+        # this time" but "are this turn's words in the transcript". Because the
+        # human transcript tiles the timeline, a turn is always flanked by its
+        # neighbours' speech, so a presence test is satisfied by the other
+        # speaker's words and only fails when a system drops a whole region.
+        # Comparing the words themselves is the test that survives that.
+        ref_tokens = content_tokens(str(turn["text"]))
+        window = [
+            w for w in words
+            if w.get("start") is not None
+            and float(w["start"]) < end + TOLERANCE
+            and max(float(w.get("end") or w["start"]), float(w["start"]))
+                > start - TOLERANCE
+        ]
+        hyp_counts = collections.Counter(
+            t for w in window for t in content_tokens(str(w.get("word", "")))
+        )
+        found = 0
+        for token, need in collections.Counter(ref_tokens).items():
+            found += min(need, hyp_counts.get(token, 0))
+        recovered = found / len(ref_tokens) if ref_tokens else None
+
         rows.append({
             "speaker": speaker if speaker in ROLE_LABELS else f"unnamed ({speaker})",
+            "recovered": round(recovered, 4) if recovered is not None else None,
+            # None of this turn's words are anywhere near where it was said.
+            "content_lost": recovered is not None and recovered == 0.0,
+            # Less than half of them, which still reads as a mangled turn.
+            "content_mostly_lost": recovered is not None and recovered < 0.5,
             "length": round(end - start, 3),
             "length_bucket": bucket(end - start, LENGTH_BUCKETS),
             "previous_bucket": (
@@ -180,8 +221,22 @@ def summarize(rows: list[dict]) -> dict:
         entirely = sum(1 for r in subset if r["lost_entirely"])
         beyond = sum(1 for r in subset if r["lost_beyond_tolerance"])
         speaker = sum(1 for r in subset if r["lost_to_speaker"])
+        scored = [r for r in subset if r["recovered"] is not None]
+        content = sum(1 for r in scored if r["content_lost"])
+        mostly = sum(1 for r in scored if r["content_mostly_lost"])
         return {
             "turns": total,
+            "content_scored": len(scored),
+            "content_lost": content,
+            "content_mostly_lost": mostly,
+            "content_lost_rate": round(content / len(scored), 4) if scored else None,
+            "content_mostly_lost_rate": (
+                round(mostly / len(scored), 4) if scored else None
+            ),
+            "recovered_mean": (
+                round(sum(r["recovered"] for r in scored) / len(scored), 4)
+                if scored else None
+            ),
             "lost_entirely": entirely,
             "lost_beyond_tolerance": beyond,
             "lost_to_speaker": speaker,
@@ -316,13 +371,17 @@ def main(argv: list[str] | None = None) -> int:
     aggregate = {name: summarize(items) for name, items in rows.items() if items}
 
     table = []
-    for name, entry in sorted(aggregate.items(), key=lambda kv: kv[1]["lost_rate"]):
+    for name, entry in sorted(
+        aggregate.items(), key=lambda kv: kv[1]["content_lost_rate"]
+    ):
         table.append((
             registry.label_of(name),
             [
                 ("turns", str(entry["turns"])),
-                (f"lost (nothing within {TOLERANCE}s)", f"{entry['lost_rate']:.4f}"),
-                ("strictly inside the span", f"{entry['lost_entirely_rate']:.4f}"),
+                ("none of its words found", f"{entry['content_lost_rate']:.4f}"),
+                ("under half found", f"{entry['content_mostly_lost_rate']:.4f}"),
+                ("words found on average", f"{entry['recovered_mean']:.4f}"),
+                (f"nothing within {TOLERANCE}s", f"{entry['lost_rate']:.4f}"),
                 ("wrong speaker or missing", f"{entry['lost_to_speaker_rate']:.4f}"),
             ],
         ))
@@ -343,7 +402,7 @@ def main(argv: list[str] | None = None) -> int:
 
     for name, entry in aggregate.items():
         print()
-        print(f"{registry.label_of(name)} -- turns lost")
+        print(f"{registry.label_of(name)} -- turns with none of their words found")
         for field in (
             "by_length_bucket", "by_previous_bucket", "by_speaker",
             "short_turns_by_previous",
@@ -351,8 +410,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {field.removeprefix('by_').replace('_', ' ')}")
             for key, stats in entry[field].items():
                 print(
-                    f"    {key:<20} {stats['lost_rate']:.4f}"
-                    f"  ({stats['lost_beyond_tolerance']} of {stats['turns']})"
+                    f"    {key:<20} {stats['content_lost_rate']:.4f}"
+                    f"  ({stats['content_lost']} of {stats['content_scored']})"
                 )
 
     if args.output:
@@ -372,7 +431,7 @@ def main(argv: list[str] | None = None) -> int:
             "visit", "system", "speaker", "length", "length_bucket",
             "previous_bucket", "ref_words", "hyp_words", "lost_entirely",
             "lost_to_speaker", "wrong_speaker", "lost_beyond_tolerance",
-            "nearest_word",
+            "recovered", "content_lost", "nearest_word",
         ]
         with open(args.csv, "w", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields)
