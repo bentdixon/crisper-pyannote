@@ -191,6 +191,7 @@ def main(argv: list[str] | None = None) -> int:
             for key in (
                 "gold_spans", "predicted_spans", "true_positives",
                 "false_positives", "false_negatives", "leak_testable", "leaked",
+                "identifiers_testable", "identifiers_readable",
             ):
                 totals[name][key] += result[key]
             categories[name].update(result["categories"])
@@ -201,7 +202,12 @@ def main(argv: list[str] | None = None) -> int:
             if args.leaks_csv:
                 site, subject, session = relative.parts[:3]
                 for order, span in enumerate(result["spans"], start=1):
-                    if not (span["leaked"] or args.all_spans):
+                    # readable_somewhere without leaked is an occurrence this
+                    # system did redact, whose name survives elsewhere. Worth
+                    # reading, so it is written, and flagged rather than
+                    # counted as this occurrence leaking.
+                    if not (span["leaked"] or span.get("readable_somewhere")
+                            or args.all_spans):
                         continue
                     leak_rows.append({
                         "site": site,
@@ -211,6 +217,7 @@ def main(argv: list[str] | None = None) -> int:
                         "span": order,
                         "identifier": span["surface"],
                         "leaked": int(span["leaked"]),
+                        "readable_elsewhere": int(span.get("readable_somewhere", False)),
                         "redacted": int(span["redacted"]),
                         "leak_testable": int(span["testable"]),
                         "labels": " ".join(span["labels"]),
@@ -262,6 +269,16 @@ def main(argv: list[str] | None = None) -> int:
                 counter["leaked"] / counter["leak_testable"]
                 if counter["leak_testable"] else None
             ),
+            # The other privacy question: not "did this occurrence survive" but
+            # "can this person still be identified anywhere in the transcript".
+            # One entry per distinct identifier per visit, so a name marked
+            # seventeen times cannot contribute seventeen failures.
+            "identifiers_testable": counter["identifiers_testable"],
+            "identifiers_readable": counter["identifiers_readable"],
+            "identifier_leak_rate": (
+                counter["identifiers_readable"] / counter["identifiers_testable"]
+                if counter["identifiers_testable"] else None
+            ),
             "categories": dict(categories[name]),
         }
 
@@ -269,6 +286,10 @@ def main(argv: list[str] | None = None) -> int:
     for name, stats in sorted(aggregate.items(), key=lambda kv: -(kv[1]["f1"] or 0)):
         leak = (
             f"{stats['leak_rate'] * 100:.1f}%" if stats["leak_rate"] is not None else "-"
+        )
+        named = (
+            f"{stats['identifier_leak_rate'] * 100:.1f}%"
+            if stats["identifier_leak_rate"] is not None else "-"
         )
         rows.append((
             registry.label_of(name),
@@ -285,6 +306,7 @@ def main(argv: list[str] | None = None) -> int:
                 ("under", f"{stats['under_rate'] * 100:.1f}%"),
                 ("over", f"{stats['over_rate'] * 100:.1f}%"),
                 ("leak", leak),
+                ("names readable", named),
             ],
         ))
     print()
@@ -296,7 +318,7 @@ def main(argv: list[str] | None = None) -> int:
         leak_rows.sort(key=lambda r: (r["subject"], r["session"], r["span"], r["system"]))
         fields = [
             "site", "subject", "session", "system", "span", "identifier",
-            "leaked", "redacted", "leak_testable", "labels",
+            "leaked", "readable_elsewhere", "redacted", "leak_testable", "labels",
             "human_context", "system_context",
         ]
         with open(args.leaks_csv, "w", newline="") as handle:

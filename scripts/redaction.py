@@ -24,8 +24,22 @@ Two numbers come out of this, and they answer different questions:
                 where the humans marked PII. Category-agnostic here, because
                 the gold braces carry no label.
   leak rate     of the gold spans whose surface form survives in the human
-                transcript, how many appear verbatim in the system's output.
-                Alignment-free and the number a privacy reviewer asks for.
+                transcript, how many still read verbatim in the system's
+                output at that point. The number a privacy reviewer asks for.
+  identifier
+  leak rate     of the distinct identifiers in a transcript, how many can
+                still be read somewhere in the system's output.
+
+The two leak numbers are deliberately separate, and conflating them is a
+mistake this file made. The first version searched the whole transcript for
+the surface form and then charged the result to every occurrence of it: on
+SI00132/day0223_session004 a first name is marked seventeen times, Chirp-3
+redacted eleven of them, and all seventeen were recorded as leaked -- with a
+per-occurrence context showing the placeholder that had correctly replaced it.
+That penalised the systems that redact most occurrences hardest: half of the
+Gemma arms' recorded leaks were occurrences they had themselves redacted,
+against 5.6% of verbatimize's. Occurrences are now tested where they stand,
+and "is this name readable anywhere" is counted once per name.
 """
 
 from __future__ import annotations
@@ -227,14 +241,24 @@ def score_visit(human: Path | list[dict], words: list[dict]) -> dict:
         # form left, so it can be matched positionally but never leak-tested.
         testable = not span["scrubbed"] and bool(span["surface"].strip())
         needle = " ".join(normalize_token(t) for t in span["surface"].split())
-        leaked = bool(
-            testable and needle
-            and re.search(rf"(?:^| ){re.escape(needle)}(?: |$)", joined)
-        )
+        pattern = rf"(?:^| ){re.escape(needle)}(?: |$)" if needle else None
+
+        # Tested where the occurrence stands: the system tokens this occurrence
+        # projects onto, and nothing else. Two occurrences close enough to fall
+        # in one alignment block share a region and are therefore both charged
+        # if the name survives inside it -- that is a genuine ambiguity about
+        # which of them was redacted, not something a wider or narrower window
+        # would resolve.
+        region = " ".join(normalize_token(t) for t in hyp_tokens[low:high])
+        leaked = bool(testable and pattern and re.search(pattern, region))
+        # The same surface form anywhere in the output. Aggregated per distinct
+        # identifier below; never charged to each occupation of it.
+        elsewhere = bool(testable and pattern and re.search(pattern, joined))
         details.append({
             "surface": span["surface"],
             "testable": testable,
             "leaked": leaked,
+            "readable_somewhere": elsewhere,
             "redacted": bool(hit),
             "labels": sorted({predicted[k]["label"] for k in hit}),
             "human_context": context(ref_tokens, span["start"], span["end"]),
@@ -245,6 +269,13 @@ def score_visit(human: Path | list[dict], words: list[dict]) -> dict:
     false_positives = len(predicted) - len(matched_predictions)
     testable_spans = [d for d in details if d["testable"]]
     leaked = sum(1 for d in testable_spans if d["leaked"])
+
+    # One entry per distinct identifier, so a name marked seventeen times
+    # counts once toward "can this person still be identified".
+    identifiers: dict[str, bool] = {}
+    for detail in testable_spans:
+        key = " ".join(normalize_token(t) for t in detail["surface"].split())
+        identifiers[key] = identifiers.get(key, False) or detail["readable_somewhere"]
 
     categories: dict[str, int] = {}
     for span in predicted:
@@ -267,6 +298,8 @@ def score_visit(human: Path | list[dict], words: list[dict]) -> dict:
         "f1": f1,
         "leak_testable": len(testable_spans),
         "leaked": leaked,
+        "identifiers_testable": len(identifiers),
+        "identifiers_readable": sum(1 for v in identifiers.values() if v),
         "categories": categories,
         "spans": details,
     }
