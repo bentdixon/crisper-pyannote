@@ -94,6 +94,14 @@ TOLERANCE = 0.5
 # both sides or the comparison measures notation.
 TOKEN = re.compile(r"[a-z0-9']+")
 
+# A second, deliberately generous window for the same content test. Our word
+# timestamps come from windowed transcription and carry a few tenths of a
+# second of placement error against the human turn marks, so content that was
+# transcribed can fall outside a tight window and read as missing. If a
+# system's loss disappears at this width the words were there and mistimed; if
+# it does not, they are absent.
+WIDE = 3.0
+
 
 def content_tokens(text: str) -> list[str]:
     text = re.sub(r"\[[^\]]*\]", " ", text.lower())
@@ -174,13 +182,27 @@ def turn_rows(turns: list[dict], words: list[dict]) -> list[dict]:
             and max(float(w.get("end") or w["start"]), float(w["start"]))
                 > start - TOLERANCE
         ]
-        hyp_counts = collections.Counter(
-            t for w in window for t in content_tokens(str(w.get("word", "")))
-        )
-        found = 0
-        for token, need in collections.Counter(ref_tokens).items():
-            found += min(need, hyp_counts.get(token, 0))
-        recovered = found / len(ref_tokens) if ref_tokens else None
+        wide_window = [
+            w for w in words
+            if w.get("start") is not None
+            and float(w["start"]) < end + WIDE
+            and max(float(w.get("end") or w["start"]), float(w["start"])) > start - WIDE
+        ]
+
+        def recovery(subset: list[dict]) -> float | None:
+            if not ref_tokens:
+                return None
+            counts = collections.Counter(
+                t for w in subset for t in content_tokens(str(w.get("word", "")))
+            )
+            found = sum(
+                min(need, counts.get(token, 0))
+                for token, need in collections.Counter(ref_tokens).items()
+            )
+            return found / len(ref_tokens)
+
+        recovered = recovery(window)
+        recovered_wide = recovery(wide_window)
 
         rows.append({
             "speaker": speaker if speaker in ROLE_LABELS else f"unnamed ({speaker})",
@@ -189,6 +211,8 @@ def turn_rows(turns: list[dict], words: list[dict]) -> list[dict]:
             "content_lost": recovered is not None and recovered == 0.0,
             # Less than half of them, which still reads as a mangled turn.
             "content_mostly_lost": recovered is not None and recovered < 0.5,
+            "recovered_wide": round(recovered_wide, 4) if recovered_wide is not None else None,
+            "content_lost_wide": recovered_wide is not None and recovered_wide == 0.0,
             "length": round(end - start, 3),
             "length_bucket": bucket(end - start, LENGTH_BUCKETS),
             "previous_bucket": (
@@ -223,6 +247,7 @@ def summarize(rows: list[dict]) -> dict:
         speaker = sum(1 for r in subset if r["lost_to_speaker"])
         scored = [r for r in subset if r["recovered"] is not None]
         content = sum(1 for r in scored if r["content_lost"])
+        wide = sum(1 for r in scored if r["content_lost_wide"])
         mostly = sum(1 for r in scored if r["content_mostly_lost"])
         return {
             "turns": total,
@@ -230,6 +255,8 @@ def summarize(rows: list[dict]) -> dict:
             "content_lost": content,
             "content_mostly_lost": mostly,
             "content_lost_rate": round(content / len(scored), 4) if scored else None,
+            "content_lost_wide": wide,
+            "content_lost_wide_rate": round(wide / len(scored), 4) if scored else None,
             "content_mostly_lost_rate": (
                 round(mostly / len(scored), 4) if scored else None
             ),
@@ -379,6 +406,7 @@ def main(argv: list[str] | None = None) -> int:
             [
                 ("turns", str(entry["turns"])),
                 ("none of its words found", f"{entry['content_lost_rate']:.4f}"),
+                (f"none within {WIDE:g}s either", f"{entry['content_lost_wide_rate']:.4f}"),
                 ("under half found", f"{entry['content_mostly_lost_rate']:.4f}"),
                 ("words found on average", f"{entry['recovered_mean']:.4f}"),
                 (f"nothing within {TOLERANCE}s", f"{entry['lost_rate']:.4f}"),
@@ -431,7 +459,8 @@ def main(argv: list[str] | None = None) -> int:
             "visit", "system", "speaker", "length", "length_bucket",
             "previous_bucket", "ref_words", "hyp_words", "lost_entirely",
             "lost_to_speaker", "wrong_speaker", "lost_beyond_tolerance",
-            "recovered", "content_lost", "nearest_word",
+            "recovered", "content_lost", "recovered_wide", "content_lost_wide",
+            "nearest_word",
         ]
         with open(args.csv, "w", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields)
