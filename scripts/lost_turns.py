@@ -125,6 +125,18 @@ def turn_rows(turns: list[dict], words: list[dict]) -> list[dict]:
         # number the speakers instead of naming them.
         speaker = str(turn["speaker"]).upper().rstrip(":")
 
+        # How far away the nearest transcribed word is when nothing landed
+        # inside the turn. A lost turn with a word 0.1 s outside it is a
+        # timestamp sitting slightly wrong; a lost turn with silence for
+        # seconds either side is speech that was never transcribed at all.
+        # Without this the measure cannot tell one from the other, and the two
+        # pipelines being compared segment the audio differently.
+        nearest = None
+        if not inside and timed:
+            nearest = round(
+                min(max(start - w[1], w[0] - end, 0.0) for w in timed), 3
+            )
+
         rows.append({
             "speaker": speaker if speaker in ROLE_LABELS else f"unnamed ({speaker})",
             "length": round(end - start, 3),
@@ -140,6 +152,7 @@ def turn_rows(turns: list[dict], words: list[dict]) -> list[dict]:
             # Words present but none of them this speaker's: the speech was
             # transcribed and the attribution was not.
             "wrong_speaker": bool(inside) and not speaker_words,
+            "nearest_word": nearest,
         })
         previous_length = end - start
     return rows
@@ -171,6 +184,27 @@ def summarize(rows: list[dict]) -> dict:
     # length fixed at the shortest bucket is what separates "brief turns are
     # fragile" from "brief turns spoken into someone else's long stretch are
     # fragile" -- only the second is an overlap story.
+    # Of the turns nothing landed in, how far the nearest word was. Near zero
+    # means the words exist and the clock disagrees; seconds mean silence.
+    distances = sorted(
+        r["nearest_word"] for r in rows
+        if r["lost_entirely"] and r["nearest_word"] is not None
+    )
+    if distances:
+        entry["nearest_word_when_lost"] = {
+            "turns": len(distances),
+            "within_0.25s": round(
+                sum(1 for d in distances if d <= 0.25) / len(distances), 4
+            ),
+            "within_1s": round(
+                sum(1 for d in distances if d <= 1.0) / len(distances), 4
+            ),
+            "median": distances[len(distances) // 2],
+            "over_5s": round(
+                sum(1 for d in distances if d > 5.0) / len(distances), 4
+            ),
+        }
+
     short = [r for r in rows if r["length_bucket"] == f"<{LENGTH_BUCKETS[0]:g}s"]
     entry["short_turns_by_previous"] = {
         key: rates([r for r in short if r["previous_bucket"] == key])
@@ -278,6 +312,18 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print(registry.report(table))
 
+    print()
+    print("when a turn was never transcribed, how far away the nearest word was")
+    for name, entry in aggregate.items():
+        stats = entry.get("nearest_word_when_lost")
+        if stats:
+            print(
+                f"  {registry.label_of(name)}\n"
+                f"    {stats['turns']} lost turns   within 0.25s "
+                f"{stats['within_0.25s']:.1%}   within 1s {stats['within_1s']:.1%}"
+                f"   median {stats['median']:.2f}s   over 5s {stats['over_5s']:.1%}"
+            )
+
     for name, entry in aggregate.items():
         print()
         print(f"{registry.label_of(name)} -- turns never transcribed")
@@ -308,7 +354,7 @@ def main(argv: list[str] | None = None) -> int:
         fields = [
             "visit", "system", "speaker", "length", "length_bucket",
             "previous_bucket", "ref_words", "hyp_words", "lost_entirely",
-            "lost_to_speaker", "wrong_speaker",
+            "lost_to_speaker", "wrong_speaker", "nearest_word",
         ]
         with open(args.csv, "w", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields)
