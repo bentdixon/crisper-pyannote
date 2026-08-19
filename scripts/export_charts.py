@@ -332,18 +332,22 @@ def tail_figures(jiwer: dict | None, lost: dict | None,
     svg, w, h = lost_turn_svg(lost, legend=True)
     if svg:
         out.append(("lost-turns", *titled(
-            "Brief turns that were never transcribed at all",
-            "lower is better; only turns under one second",
+            "Turns that never made it into the transcript",
+            "lower is better; nothing transcribed within half a second of the turn",
             svg, w, h,
-            "A turn counts as never transcribed when the system produced no word "
-            "anywhere inside the time the transcript says someone was speaking. "
-            "Word error rate barely notices these -- a lost four-word question is "
-            "four missing words out of five thousand -- but a reader notices "
-            "immediately, because a question has gone from the conversation. Only "
-            "turns under a second are shown, so the comparison across the groups is "
-            "not just a comparison of turn lengths. Loss is lowest when the two "
-            "speakers were trading quickly and highest when the brief turn landed "
-            "in the middle of a long stretch of the other person talking.",
+            "A turn is lost when the system produced no word within half a second "
+            "of the time the transcript says someone was speaking. The half second "
+            "matters: the typists marked turn times to about a third of a second, "
+            "and a stricter test counts an approximate boundary as a missing "
+            "sentence. Chirp-3 loses three to four times as many turns as either "
+            "CrisperWhisper pipeline, and loses them at the same rate whatever the "
+            "turn length -- when Chirp-3 loses a turn the nearest transcribed word "
+            "is a median of 44 seconds away, so it is dropping whole stretches of "
+            "the interview rather than individual sentences. The CrisperWhisper "
+            "pipelines lose short turns about twice as often as long ones. Word "
+            "error rate barely notices any of this: a lost four-word question is "
+            "four missing words out of five thousand, but a reader sees a question "
+            "gone from the conversation.",
             clean=clean,
         )))
     return out

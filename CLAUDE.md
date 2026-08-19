@@ -727,41 +727,58 @@ Two visits run off the head-to-head scale (worst -67 points), including the
 known near-silent GA06750 file; they are drawn as wedges at the edge and
 counted in the caption rather than allowed to set the axis.
 
-### Lost turns: what sWER cannot see, and the overlap question answered
+### Lost turns: what sWER cannot see, and why the strict test was wrong
 
-`scripts/lost_turns.py` (CPU, ~90 s for six systems over 269 visits) asks per
-human turn whether any word landed inside its span (**never transcribed** -- an
-ASR loss) and whether any of those carried the matched speaker (**wrong
-speaker** -- a diarization loss). 68,950 turns:
+`scripts/lost_turns.py` (CPU, ~90 s for four systems over 269 visits) asks per
+human turn whether any word landed inside its span and whether any of those
+carried the matched speaker. 68,950 turns:
 
-    system                        never transcribed   wrong speaker or missing
-    CW2 + pyannote 3.1                       2.82%                     14.95%
-    chirp3                                   5.82%                     22.53%
-    CW2 + community-1 (ours)                 6.35%                     25.18%
-    verbatimize                              8.96%                     24.65%
+    system              lost   strict   wrong speaker or missing
+    CW2 + pyannote 3.1  1.04%   2.82%                     14.95%
+    CW2 + community-1   1.28%   6.35%                     25.18%
+    chirp3              4.37%   5.82%                     22.53%
+    verbatimize         7.40%   8.96%                     24.65%
 
-**sWER is the wrong instrument for this** and no amount of fixing makes it the
+**The strict column is not usable and the first version of this table quoted
+it.** A turn counted as lost when no word fell inside its annotated span, which
+cannot separate a boundary drawn approximately from speech that was never
+transcribed. Distance to the nearest word when a turn is "lost":
+
+    system              within 0.25s   within 1s    median   over 5s
+    chirp3                     21.8%       26.9%    44.18s     67.7%
+    verbatimize                15.2%       18.8%    47.59s     75.3%
+    ours                       68.3%       85.0%     0.13s     10.5%
+    baseline                   54.9%       70.4%     0.20s     22.8%
+
+Two different failures. Chirp-3 drops whole regions -- a median of 44 seconds
+to the nearest transcribed word, which is the known long-gap behaviour also seen
+by verbatimize's window builder. Ours mostly has the words a tenth of a second
+outside an approximate boundary. `score_timestamps.py` put the transcripts'
+annotation granularity at roughly a third of a second, and turns under one
+second are shorter than three times that, so the strict test was measuring
+annotation on exactly the bucket the finding rested on. `TOLERANCE = 0.5` is
+the reported measure now; the strict count is kept beside it.
+
+Consequences of the correction:
+
+- **The other team's pipeline does not lose materially fewer turns.** 1.04%
+  against our 1.28%, not 2.8% against 6.3%. Both are 3-4x better than chirp3.
+- **Chirp-3's turn loss is flat across turn length** (4.2-4.6% in every bucket),
+  which is what losing regions rather than sentences looks like. The two CW2
+  pipelines lose short turns about twice as often as long ones (2.0% under a
+  second against 0.8-1.0% over five).
+- **The overlap story weakens further.** Under tolerance, ours by previous-turn
+  length runs 0.72% / 1.20% / 1.61% / 1.36% -- no longer monotonic, and the
+  short-turn cross-tab peaks in the middle buckets on counts of 21-91 turns.
+  Neither the rapid-exchange framing nor the long-stretch framing survives as a
+  clean effect. That split stays in the JSON and the console output; the figure
+  groups by turn length, where the systems genuinely differ in shape.
+
+**sWER remains the wrong instrument for any of this** and no fix makes it the
 right one: it pools every word a speaker said into one stream, so a lost
 four-word turn is four deletions among five thousand words; it cannot separate
 "never transcribed" from "wrong speaker"; and comparing concatenated text says
 nothing about whether the exchange survived as an exchange.
-
-**The overlap hypothesis, as originally framed, is refuted.** Holding turn
-length fixed at under a second (the confound: short turns are lost most and are
-not evenly spread), loss by how long the *previous* turn ran:
-
-    previous turn   <1.5s    1.5-3s    3-8s     8s+
-    ours            12.1%     16.7%   17.9%   18.8%
-    chirp3           9.1%      9.4%   10.9%   13.3%
-
-Loss is *lowest* in rapid exchanges and *highest* when a brief turn lands inside
-someone else's long stretch -- the interjection-into-a-monologue case, which is
-exactly the CM02493 18:48 example. Overlap may still be the mechanism, but not
-the rapid-alternation kind the gap proxy was built to detect.
-
-Note also that ours and baseline share an ASR model and differ 2.8% against
-6.4% on never-transcribed: that gap is our silero windowing against their VAD
-segmentation, not CrisperWhisper.
 
 Figure: `lost-turns` (`lost_turn_svg`), via `export_charts.py --lost-turns`.
 

@@ -277,8 +277,14 @@ ones. A single average per system hides that completely.*
 ## "Lost turn"
 
 A turn is one uninterrupted stretch of one person speaking. A turn is lost when
-the system produced no word at all during the time the typist says someone was
-talking -- the sentence is simply not in the transcript.
+the system produced no word at all within half a second of the time the typist
+says someone was talking -- the sentence is simply not in the transcript.
+
+The half second is not a fudge. The typists marked turn times to about a third
+of a second, so demanding a word land exactly inside the marked span counts an
+approximately drawn boundary as a missing sentence. That mattered a lot: on a
+strict test our pipeline appeared to lose 6.3% of turns, but 85% of those had a
+word within one second of the span. They were not missing.
 
 This is worth its own number because word error rate hardly notices it. A lost
 four-word question is four missing words out of five thousand, a rounding error
@@ -287,21 +293,22 @@ from the conversation and an answer to nothing.
 
 Across all 269 interviews, of 68,950 turns:
 
-| | turns never transcribed |
+| | turns lost |
 |---|---:|
-| CrisperWhisper with pyannote 3.1 | 2.8% |
-| Google Chirp-3 | 5.8% |
-| CrisperWhisper with community-1 (ours) | 6.3% |
-| Chirp-3 put through verbatimize | 9.0% |
+| CrisperWhisper with pyannote 3.1 | 1.0% |
+| CrisperWhisper with community-1 (ours) | 1.3% |
+| Google Chirp-3 | 4.4% |
+| Chirp-3 put through verbatimize | 7.4% |
 
-Brief turns are the ones that vanish: under one second, our pipeline loses 17%
-of them. And they vanish most when they land in the middle of a long stretch of
-the other person talking -- a short question dropped into a long answer -- not
-when the two speakers were trading quickly.
+The two kinds of loss are not alike. When Chirp-3 loses a turn, the nearest word
+it did transcribe is a median of 44 seconds away -- it drops whole stretches of
+the interview, not single sentences. When ours loses one, the nearest word is a
+tenth of a second away. Chirp-3 also loses turns at the same rate whatever their
+length, while ours lose short turns about twice as often as long ones.
 
-**Slide line:** *Between 3% and 9% of turns never make it into the transcript at
-all. Short interjections during someone else's long answer are the ones that
-disappear.*
+**Slide line:** *Chirp-3 leaves three to four times as much of the conversation
+out of the transcript as either of our pipelines, and it goes missing in long
+stretches rather than odd sentences.*
 
 ## "Speaker error" (charts say **DER confusion**, or **sWER**)
 

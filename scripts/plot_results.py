@@ -2785,13 +2785,21 @@ def ecdf_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
 
 
 def lost_turn_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
-    """Brief turns never transcribed, grouped by how long the previous turn ran.
+    """Turns nothing was transcribed for, grouped by how long the turn ran.
 
-    Turn length is held fixed at the shortest bucket, because short turns are
-    lost most and are not evenly spread across the previous-length buckets.
-    What is left is the question the figure exists to answer: does a brief turn
-    disappear because the speakers were trading rapidly, or because it landed
-    inside someone else's long stretch of speech?
+    A turn counts as lost only when no word was produced within half a second
+    of it. The strict inside-the-span test measured the transcripts' own
+    annotation granularity: 68% of the turns our pipeline appeared to lose have
+    a word within a quarter of a second of the span, against 22% of Chirp-3's,
+    whose lost turns sit a median of 44 seconds from the nearest word. Those
+    are two different failures -- a boundary drawn approximately, and a stretch
+    of speech that was never transcribed -- and the strict test conflated them.
+
+    Grouping by turn length rather than by the gap to the previous turn,
+    because that is where the systems actually differ in shape: the two
+    CrisperWhisper pipelines lose short turns about twice as often as long
+    ones, while Chirp-3's loss is flat across every length, which is what
+    losing whole regions rather than individual turns looks like.
     """
     if not data:
         return "", 0, 0
@@ -2799,20 +2807,20 @@ def lost_turn_svg(data: dict | None, legend: bool = False) -> tuple[str, int, in
     rows = []
     for name, parts, colour, _ in SYSTEMS:
         stats = registry.entry_of(aggregate, name)
-        if stats and stats.get("short_turns_by_previous"):
+        if stats and stats.get("by_length_bucket"):
             rows.append((name, parts, colour, stats))
     if not rows:
         return "", 0, 0
 
     buckets = [
-        key for key in ("<1.5s", "<3s", "<8s", "8s+")
-        if key in rows[0][3]["short_turns_by_previous"]
+        key for key in ("<1s", "<2s", "<5s", "5s+")
+        if key in rows[0][3]["by_length_bucket"]
     ]
     labels = {
-        "<1.5s": "under 1.5s",
-        "<3s": "1.5 to 3s",
-        "<8s": "3 to 8s",
-        "8s+": "over 8s",
+        "<1s": "under 1s",
+        "<2s": "1 to 2s",
+        "<5s": "2 to 5s",
+        "5s+": "over 5s",
     }
 
     pad_l, pad_r, pad_t, pad_b = 46, 16, 16, 62
@@ -2824,7 +2832,7 @@ def lost_turn_svg(data: dict | None, legend: bool = False) -> tuple[str, int, in
     # groups of four bars; sizing to the bars alone clips the longest name.
     width = max(pad_l + plot_w + pad_r, 780)
     high = max(
-        stats["short_turns_by_previous"][b]["lost_entirely_rate"]
+        stats["by_length_bucket"][b]["lost_rate"]
         for _, _, _, stats in rows for b in buckets
     ) * 1.15
 
@@ -2848,28 +2856,26 @@ def lost_turn_svg(data: dict | None, legend: bool = False) -> tuple[str, int, in
     for index, bucket_key in enumerate(buckets):
         x0 = pad_l + index * group_w
         for order, (_name, _parts, colour, stats) in enumerate(rows):
-            stat = stats["short_turns_by_previous"][bucket_key]
-            value = stat["lost_entirely_rate"]
+            value = stats["by_length_bucket"][bucket_key]["lost_rate"]
             bx = x0 + bar_gap + order * (bar_w + bar_gap)
             out.append(
                 f'<rect x="{bx:.1f}" y="{y(value):.1f}" width="{bar_w:.1f}" '
                 f'height="{pad_t + plot_h - y(value):.1f}" fill="{colour}"/>'
                 f'<text x="{bx + bar_w / 2:.1f}" y="{y(value) - 5:.1f}" '
-                f'text-anchor="middle" class="val">{value * 100:.0f}%</text>'
+                f'text-anchor="middle" class="val">{value * 100:.1f}%</text>'
             )
         out.append(
             f'<text x="{x0 + group_w / 2:.1f}" y="{pad_t + plot_h + 17}" '
             f'text-anchor="middle" class="cat">{escape(labels[bucket_key])}</text>'
             f'<text x="{x0 + group_w / 2:.1f}" y="{pad_t + plot_h + 32}" '
             f'text-anchor="middle" class="tick">'
-            f'{rows[0][3]["short_turns_by_previous"][bucket_key]["turns"]} turns</text>'
+            f'{rows[0][3]["by_length_bucket"][bucket_key]["turns"]} turns</text>'
         )
     out.append(
         f'<line x1="{pad_l}" y1="{pad_t + plot_h}" x2="{pad_l + plot_w}" '
         f'y2="{pad_t + plot_h}" stroke="{AXIS}" stroke-width="1.2"/>'
         f'<text x="{pad_l + plot_w / 2:.1f}" y="{pad_t + plot_h + 56}" '
-        f'text-anchor="middle" class="tick">how long the other speaker '
-        f'had been talking first</text>'
+        f'text-anchor="middle" class="tick">how long the turn ran</text>'
     )
     if legend:
         for index, (_name, parts, colour, stats) in enumerate(rows):
@@ -2878,7 +2884,7 @@ def lost_turn_svg(data: dict | None, legend: bool = False) -> tuple[str, int, in
                 f'<rect x="{pad_l}" y="{ly - 8}" width="10" height="10" rx="2" '
                 f'fill="{colour}"/><text x="{pad_l + 16}" y="{ly}" class="leg">'
                 f'{escape(" + ".join(parts))} -- '
-                f'{stats["lost_entirely_rate"] * 100:.1f}% of all turns lost</text>'
+                f'{stats["lost_rate"] * 100:.1f}% of all turns lost</text>'
             )
     out.append("</svg>")
     return "".join(out), width, height
