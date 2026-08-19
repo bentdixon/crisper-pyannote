@@ -895,13 +895,13 @@ def exposure_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int
     ]
     for index, (label_parts, _, entry, values) in enumerate(rows):
         y = pad_t + index * (row_h + gap)
-        block = len(label_parts) * line_h
+        lines = _label_lines(label_parts)
+        block = len(lines) * line_h
         first = y + (row_h - block) / 2 + line_h - 3
-        for line_index, component in enumerate(label_parts):
-            suffix = " +" if line_index < len(label_parts) - 1 else ""
+        for line_index, text in enumerate(lines):
             out.append(
                 f'<text x="{pad_l - 12}" y="{first + line_index * line_h:.1f}" '
-                f'text-anchor="end" class="cat">{escape(component + suffix)}</text>'
+                f'text-anchor="end" class="cat">{escape(text)}</text>'
             )
         counts = [
             sum(1 for v in values if low <= v <= high) for low, high, _ in buckets
@@ -930,7 +930,7 @@ def exposure_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int
 
     out.append(
         f'<text x="{pad_l}" y="{height - pad_b + 24}" class="tick">'
-        f'each band is the share of transcripts in that exposure bucket'
+        f'each band is a share of the interviews that carry marked items'
         f'</text>'
     )
     out.append(key)
