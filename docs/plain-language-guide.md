@@ -25,8 +25,8 @@ whether the software finds the same ones.*
 One thing a human typist flagged as identifying someone. A first name is one
 marked item. "San Francisco" is one marked item, not two.
 
-There are **876** of these across the 269 interviews, and **180** in the 24
-interviews used for the head-to-head test.
+There are **876** of these across the 269 interviews. Every number in this deck
+is measured over all 269.
 
 **Slide line:** *876 pieces of identifying information, marked by hand.*
 
@@ -40,8 +40,9 @@ reads; the name is gone.
 
 Of everything the typist marked, how much did the software blank out?
 
-Found 90% means: of 100 names and dates the typist flagged, the software
-blanked out 90 and walked past 10.
+Found 81% means: of 100 names and dates the typist flagged, the software
+blanked out 81 and walked past 19. That is our best method; Google's Chirp-3
+finds 65%.
 
 **Slide line:** *Found = how much of the identifying information the software
 catches.*
@@ -51,8 +52,9 @@ catches.*
 Of everything the software blanked out, how much was actually something the
 typist had marked?
 
-Correct 65% means: the software blanked out 100 things, and 65 of them matched
-something a human had flagged. The other 35 were its own idea.
+Correct 44% means: the software blanked out 100 things, and 44 of them matched
+something a human had flagged. The other 56 were its own idea. Chirp-3 scores
+28% here -- it blanks out far more, and far more loosely.
 
 **Important caveat:** those 35 are not necessarily mistakes. Only about half our
 interviews carry any marking at all, and typists miss things. When the software
@@ -88,13 +90,14 @@ finished transcript.*
 
 This trips everyone up, so it is worth a slide of its own.
 
-**"Missed 16"** means: in 16 places, the typist marked something and the
+**"Missed 170"** means: in 170 places, the typist marked something and the
 software put no blank there.
 
-**"Still readable 2"** means: in 2 places, a real name is sitting in the
+**"Still readable 17"** means: in 17 places, a real name is sitting in the
 finished transcript where you could read it.
 
-Both are out of the same 180 marked items. They differ because of what happened
+These come from different denominators -- 876 marked items for the first, and
+the 306 of them whose original wording survives for the second. They differ because of what happened
 in the other 14 places: **the identifying word never made it into our transcript
 at all.** The typist heard a name; our speech recognition heard a different word
 and wrote that instead. There was nothing to blank out, and there is nothing
@@ -106,8 +109,9 @@ name simply is not in our transcript.
 
 The reverse also happens, and it is worse. A system can blank out a name in one
 place and leave the same name readable three sentences later. The transcript
-looks cleaned up and is not. Our chunk-by-chunk method does this 6 times; the
-turn-by-turn method does it zero times.
+looks cleaned up and is not. Across all 269 interviews the chunk-by-chunk method does this far more often
+than the turn-by-turn one, which is most of why its readable count is twice as
+high (31 against 17) while the two find almost the same amount.
 
 **Slide line:** *Missing a blank is not the same as exposing a name. Count both.*
 
@@ -160,12 +164,12 @@ Both use the same model (Gemma 4, 31 billion parameters) on the same
 transcripts. They differ in what we ask it to do.
 
 **Chunk by chunk.** Hand the model a few pages of transcript, ask it to list
-the identifying words it sees, then blank out those words ourselves. Fast --
-about 25 minutes for all 269 interviews.
+the identifying words it sees, then blank out those words ourselves. Fast -- about 90 minutes
+for all 269 interviews on one GPU.
 
 **Turn by turn.** Hand the model one person's turn of speech and ask it to type
-the whole turn back out with the names already replaced by labels. Slower --
-about 12 GPU-hours for all 269 -- because it processes every turn separately
+the whole turn back out with the names already replaced by labels. Slower -- about two hours
+across three GPUs -- because it processes every turn separately
 and rewrites all the words, not just the names.
 
 We never trust the rewrite: we compare it word by word against the original and
@@ -198,3 +202,23 @@ retypes the sentence with the names removed.*
 - **Names left readable** -- the privacy number: how many real identifiers you
   could still read in the finished transcript, and what kind of thing each one
   was.
+
+---
+
+## The headline numbers, all 269 interviews
+
+| | finds | correct | still readable |
+|---|---:|---:|---:|
+| **our turn-by-turn method** | **81%** | 44% | **17 of 306** |
+| our chunk-by-chunk method | 78% | 45% | 31 of 306 |
+| Google Chirp-3, on its own | 65% | 28% | 52 of 306 |
+| Chirp-3 put through verbatimize | 9% | 27% | 197 of 306 |
+
+**Slide line:** *Our best method finds a quarter more of the identifying
+information than Google's, blanks out less of everything else, and leaves a
+third as many names readable.*
+
+The last row is a warning, not a candidate. Feeding Chirp-3's already-cleaned
+text through the disfluency step **puts the names back**: it hears the audio and
+types what was said where Chirp had written a label. It undoes de-identification
+and should not be released.
