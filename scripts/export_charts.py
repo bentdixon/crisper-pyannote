@@ -343,15 +343,17 @@ def extra_figures(data: dict, mono: dict | None, stereo: dict | None,
     svg, w, h = exposure_svg(exposure, legend=True)
     if svg:
         out.append(("pii-exposure-per-transcript", *titled(
-            "Per-transcript PII exposure",
-            "how many known identifier locations each transcript still leaves open",
+            "Interviews you could hand over as they are",
+            "one bar per system; each band is a share of the interviews",
             svg, w, h,
-            "A PII location is any position the human transcriber marked -- including "
-            "the 577 spans already scrubbed to {redacted}, which no verbatim search can "
-            "test -- or where another system emitted a placeholder. A system is exposed "
-            "where it redacted nothing. Judged leave-one-out, so a system is never "
-            "scored on locations it proposed itself; including them hands the win to "
-            "whichever redactor is most aggressive.", clean=clean,
+            "Counted one interview at a time, because that is how the question gets "
+            "asked: can this file be released. An interview is counted clean when the "
+            "system put a blank on every item its typist had marked. Only the marked "
+            "items count here, including the ones the typist deleted as they went -- "
+            "an earlier version also counted every place any other system had put a "
+            "blank, which quietly handed the win to whichever system blanked out the "
+            "most: its extra blanks became places everybody else was charged with "
+            "leaving open.", clean=clean,
         )))
 
     svg, w, h = leak_type_svg(leaks, legend=True)

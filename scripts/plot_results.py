@@ -641,13 +641,13 @@ def taxonomy_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int
 
     for index, (_, label_parts, stats) in enumerate(rows):
         y = pad_t + index * (row_h + gap)
-        block = len(label_parts) * line_h
+        lines = _label_lines(label_parts)
+        block = len(lines) * line_h
         first = y + (row_h - block) / 2 + line_h - 3
-        for line_index, component in enumerate(label_parts):
-            suffix = " +" if line_index < len(label_parts) - 1 else ""
+        for line_index, text in enumerate(lines):
             out.append(
                 f'<text x="{pad_l - 12}" y="{first + line_index * line_h:.1f}" '
-                f'text-anchor="end" class="cat">{escape(component + suffix)}</text>'
+                f'text-anchor="end" class="cat">{escape(text)}</text>'
             )
         cursor = pad_l
         total = 0.0
@@ -859,7 +859,7 @@ def exposure_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int
 
     line_h = 14
     band_h = 26
-    max_lines = max(len(p) for p, _, _, _ in rows)
+    max_lines = max(len(_label_lines(p)) for p, _, _, _ in rows)
     row_h = max(band_h + 12, max_lines * line_h + 8)
     gap, pad_l, pad_r, pad_t, pad_b = 14, 250, 92, 20, 40
     plot_w = 320
