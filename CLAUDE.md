@@ -780,7 +780,20 @@ four-word turn is four deletions among five thousand words; it cannot separate
 "never transcribed" from "wrong speaker"; and comparing concatenated text says
 nothing about whether the exchange survived as an exchange.
 
-Figure: `lost-turns` (`lost_turn_svg`), via `export_charts.py --lost-turns`.
+Four figures, all from `export_charts.py --lost-turns`:
+
+    lost-turns              lost rate by turn length, one group per length
+    turn-outcomes           every turn: lost / just outside the boundary /
+                            wrong speaker, stacked, so their relative size is
+                            visible -- wrong speaker is 12-19% and dwarfs loss
+    lost-turn-distance      distance to the nearest word when a turn is lost;
+                            the figure that says how to read the others
+    turn-outcomes-by-role   the same split by interviewer against participant
+
+`turn-outcomes-by-role` carries a finding of its own: our pipeline misattributes
+the **participant** far more than the interviewer (29.4% of participant turns
+against 20.2%), while pyannote 3.1 is near-even (15.7 / 14.5). The participant
+stream is the data, so that is the worse way round.
 
 ### Zero-duration words were all UNKNOWN (fixed 2026-08-19)
 

@@ -47,6 +47,22 @@ RAMP_INK = "#3f4a7a"
 # legend read from these same dicts, so they cannot drift apart.
 METRIC_COLOURS = {"recall": "#1f6f8b", "precision": "#d98324", "f1": "#7a4fa3"}
 OUTCOME_COLOURS = {"caught": "#1f6f8b", "missed": "#b3382c", "extra": "#d98324"}
+# What happened to a turn, and how far away the nearest word was when nothing
+# landed in it. Ordered categories, but given distinct hues rather than one
+# colour at several strengths: a key of near-identical swatches cannot be read
+# against the bars it is supposed to name.
+TURN_OUTCOME_COLOURS = {
+    "never transcribed": "#b3382c",
+    "just outside the marked boundary": "#d98324",
+    "credited to the wrong person": "#7a4fa3",
+}
+DISTANCE_COLOURS = {
+    "within a quarter second": "#3d7ea6",
+    "a quarter second to one second": "#8a8f3c",
+    "one to five seconds": "#d98324",
+    "more than five seconds away": "#b3382c",
+}
+
 LEAK_KIND_COLOURS = {
     "single word": "#b3382c",
     "two or three words": "#d98324",
@@ -2888,3 +2904,212 @@ def lost_turn_svg(data: dict | None, legend: bool = False) -> tuple[str, int, in
             )
     out.append("</svg>")
     return "".join(out), width, height
+
+
+def _lost_turn_rows(data: dict | None):
+    """Registered systems present in a lost-turns file, in registry order."""
+    if not data:
+        return []
+    aggregate = data.get("aggregate", {})
+    rows = []
+    for name, parts, colour, _ in SYSTEMS:
+        stats = registry.entry_of(aggregate, name)
+        if stats and stats.get("lost_rate") is not None:
+            rows.append((name, parts, colour, stats))
+    return rows
+
+
+def _stacked_rows_svg(rows, title: str, axis_label: str, colours: dict,
+                      total_note, legend: bool, scale: float | None = None,
+                      ) -> tuple[str, int, int]:
+    """Horizontal stacked bars, one row per system, segments keyed by colour.
+
+    Shared by the two lost-turn decompositions: both are "one row per system,
+    a handful of named categories summing to something meaningful", and the
+    only real difference is whether the total is a rate or fixed at 100%.
+
+    rows is [(label_lines, [(category, value), ...], note)].
+    """
+    if not rows:
+        return "", 0, 0
+    line_h = 14
+    max_lines = max(len(lines) for lines, _, _ in rows)
+    row_h = max(30, max_lines * line_h + 6)
+    gap, pad_l, pad_r, pad_t, pad_b = 12, 270, 120, 18, 40
+    plot_w = 420
+    body_h = len(rows) * (row_h + gap)
+    key, key_h = ("", 0)
+    if legend:
+        key, key_h = swatch_legend(
+            [(name, colour, "") for name, colour in colours.items()],
+            plot_w + pad_l + pad_r - 4, 0, columns=1,
+        )
+    height = pad_t + body_h + pad_b + key_h
+    width = pad_l + plot_w + pad_r
+
+    raw = max(sum(value for _, value in segments) for _, segments, _ in rows)
+    # Round the axis to a step a reader can do arithmetic on. Fitting five
+    # ticks to the maximum gives labels like 5 / 11 / 16 / 21 / 26 percent,
+    # which nobody can read a bar against.
+    if scale:
+        high, step = scale, scale / 5
+    else:
+        for step in (0.005, 0.01, 0.02, 0.025, 0.05, 0.1, 0.2):
+            if step * 6 >= raw:
+                break
+        high = step * -(-raw // step)
+
+    def x(value: float) -> float:
+        return pad_l + value / high * plot_w
+
+    out = [
+        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+        f'role="img" aria-label="{escape(title)}">'
+    ]
+    for tick in range(0, int(round(high / step)) + 1):
+        value = tick * step
+        gx = round(x(value), 1)
+        out.append(
+            f'<line x1="{gx}" y1="{pad_t}" x2="{gx}" y2="{pad_t + body_h - gap}" '
+            f'stroke="{GRIDLINE}" stroke-width="1"/>'
+            f'<text x="{gx}" y="{pad_t + body_h - gap + 15}" text-anchor="middle" '
+            f'class="tick">{value * 100:.0f}%</text>'
+        )
+
+    for index, (lines, segments, note) in enumerate(rows):
+        y = pad_t + index * (row_h + gap)
+        first = y + (row_h - len(lines) * line_h) / 2 + line_h - 3
+        for line_index, text in enumerate(lines):
+            out.append(
+                f'<text x="{pad_l - 14}" y="{first + line_index * line_h:.1f}" '
+                f'text-anchor="end" class="cat">{escape(text)}</text>'
+            )
+        left = 0.0
+        for category, value in segments:
+            if value <= 0:
+                continue
+            out.append(
+                f'<rect x="{x(left):.1f}" y="{y + 5:.1f}" '
+                f'width="{max(x(left + value) - x(left), 0.6):.1f}" '
+                f'height="{row_h - 10:.1f}" fill="{colours[category]}"/>'
+            )
+            left += value
+        out.append(
+            f'<text x="{pad_l + plot_w + 8}" y="{y + row_h / 2 + 4:.1f}" class="val">'
+            f'{escape(note)}</text>'
+        )
+
+    out.append(
+        f'<text x="{pad_l + plot_w / 2}" y="{pad_t + body_h - gap + 32}" '
+        f'text-anchor="middle" class="tick">{escape(axis_label)}</text>'
+    )
+    if key:
+        out.append(
+            f'<g transform="translate({2},{pad_t + body_h + pad_b - 6})">{key}</g>'
+        )
+    out.append("</svg>")
+    return "".join(out), width, height
+
+
+def turn_outcome_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
+    """Every turn in the transcripts, by what became of it.
+
+    The three ways a turn can fail, on one scale, so their relative size is
+    visible: losing a turn outright is the rarest of them, and getting the
+    words right but the speaker wrong is by far the largest. Reporting the
+    lost-turn rate on its own invites the opposite impression.
+
+    The middle segment exists because it was the whole reason the first version
+    of this measure was wrong: those turns were transcribed, with a word within
+    half a second, and only counted as missing because the boundary in the
+    human transcript is approximate to about a third of a second.
+    """
+    rows = []
+    for _name, parts, _colour, stats in _lost_turn_rows(data):
+        lost = stats["lost_rate"]
+        boundary = max(stats["lost_entirely_rate"] - lost, 0.0)
+        wrong = max(stats["lost_to_speaker_rate"] - stats["lost_entirely_rate"], 0.0)
+        rows.append((
+            _label_lines(parts, limit=36),
+            [
+                ("never transcribed", lost),
+                ("just outside the marked boundary", boundary),
+                ("credited to the wrong person", wrong),
+            ],
+            f"{(lost + boundary + wrong) * 100:.1f}% of turns",
+        ))
+    return _stacked_rows_svg(
+        rows, "what became of each turn", "share of all 68,950 turns",
+        TURN_OUTCOME_COLOURS, None, legend,
+    )
+
+
+def lost_distance_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
+    """Of the turns nothing landed inside, how far away the nearest word was.
+
+    The figure that decides how to read every other lost-turn number. Two
+    systems can lose the same share of turns and mean entirely different
+    things by it: words a tenth of a second outside an approximate boundary,
+    or nothing transcribed for the better part of a minute.
+    """
+    rows = []
+    for _name, parts, _colour, stats in _lost_turn_rows(data):
+        near = stats.get("nearest_word_when_lost")
+        if not near:
+            continue
+        quarter = near["within_0.25s"]
+        second = max(near["within_1s"] - quarter, 0.0)
+        far = near["over_5s"]
+        middle = max(1.0 - quarter - second - far, 0.0)
+        rows.append((
+            _label_lines(parts, limit=36),
+            [
+                ("within a quarter second", quarter),
+                ("a quarter second to one second", second),
+                ("one to five seconds", middle),
+                ("more than five seconds away", far),
+            ],
+            f"median {near['median']:.2f}s",
+        ))
+    return _stacked_rows_svg(
+        rows, "distance to the nearest transcribed word",
+        "share of the turns nothing landed inside",
+        DISTANCE_COLOURS, None, legend, scale=1.0,
+    )
+
+
+def lost_by_role_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
+    """The same two failures, split by who was speaking.
+
+    Worth its own panel because the two roles are not interchangeable
+    downstream: the interviewer's questions are the context every later model
+    reads, and the participant's answers are the data. Our pipeline misplaces
+    the participant noticeably more often than the interviewer, which is the
+    worse way round.
+    """
+    rows = []
+    for _name, parts, _colour, stats in _lost_turn_rows(data):
+        by_role = stats.get("by_speaker") or {}
+        roles = [r for r in ("INTERVIEWER", "PARTICIPANT") if r in by_role]
+        if len(roles) < 2:
+            continue
+        for position, role in enumerate(roles):
+            entry = by_role[role]
+            lost = entry["lost_rate"]
+            boundary = max(entry["lost_entirely_rate"] - lost, 0.0)
+            wrong = max(entry["lost_to_speaker_rate"] - entry["lost_entirely_rate"], 0.0)
+            rows.append((
+                # The system is named on its first row only; the second row
+                # carries just the role, under it in the same column.
+                (_label_lines(parts, limit=36) if position == 0 else []) + [role.lower()],
+                [
+                    ("never transcribed", lost),
+                    ("just outside the marked boundary", boundary),
+                    ("credited to the wrong person", wrong),
+                ],
+                f"{(lost + boundary + wrong) * 100:.1f}% of {entry['turns']}",
+            ))
+    return _stacked_rows_svg(
+        rows, "what became of each turn, by role", "share of that role's turns",
+        TURN_OUTCOME_COLOURS, None, legend,
+    )

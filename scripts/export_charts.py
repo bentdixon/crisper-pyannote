@@ -44,6 +44,9 @@ from plot_results import (  # noqa: E402
     ecdf_svg,
     headtohead_svg,
     lost_turn_svg,
+    lost_by_role_svg,
+    lost_distance_svg,
+    turn_outcome_svg,
     merge_partner,
     metrics_for,
     quartiles,
@@ -350,6 +353,55 @@ def tail_figures(jiwer: dict | None, lost: dict | None,
             "gone from the conversation.",
             clean=clean,
         )))
+    svg, w, h = turn_outcome_svg(lost, legend=True)
+    if svg:
+        out.append(("turn-outcomes", *titled(
+            "What became of each turn",
+            "lower is better; the bar is everything that went wrong",
+            svg, w, h,
+            "Every turn in every human transcript, by what the system did with it. "
+            "Losing a turn outright is the rarest of the three failures. The most "
+            "common by a wide margin is getting the words but crediting them to the "
+            "wrong person -- between an eighth and a quarter of all turns. The "
+            "middle band is turns whose words were transcribed within half a second "
+            "of the marked time but not exactly inside it, which is the typists' "
+            "approximate boundary rather than any kind of error; it is shown "
+            "because a stricter reading of this measure counted those as missing.",
+            clean=clean,
+        )))
+
+    svg, w, h = lost_distance_svg(lost, legend=True)
+    if svg:
+        out.append(("lost-turn-distance", *titled(
+            "When a turn is missing, how far away is the nearest word",
+            "further left is better",
+            svg, w, h,
+            "This is the figure that says how to read every other lost-turn number. "
+            "Two systems can lose the same share of turns and mean completely "
+            "different things by it. When our pipeline has nothing inside a turn, "
+            "the nearest word it did transcribe is usually a fraction of a second "
+            "away -- the sentence is there, the boundary is drawn approximately. "
+            "When Chirp-3 has nothing inside a turn, the nearest word is a median of "
+            "44 seconds away: whole stretches of the interview are simply absent.",
+            clean=clean,
+        )))
+
+    svg, w, h = lost_by_role_svg(lost, legend=True)
+    if svg:
+        out.append(("turn-outcomes-by-role", *titled(
+            "What became of each turn, by who was speaking",
+            "lower is better; two rows per system",
+            svg, w, h,
+            "The same three failures split between the interviewer and the person "
+            "being interviewed. The two are not interchangeable downstream: the "
+            "questions are the context anything reading this transcript later "
+            "depends on, and the answers are the data. Our pipeline credits the "
+            "participant's words to the wrong speaker noticeably more often than "
+            "the interviewer's, which is the worse way round; the pyannote 3.1 "
+            "pipeline is close to even between the two.",
+            clean=clean,
+        )))
+
     return out
 
 

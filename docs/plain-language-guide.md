@@ -310,6 +310,25 @@ length, while ours lose short turns about twice as often as long ones.
 out of the transcript as either of our pipelines, and it goes missing in long
 stretches rather than odd sentences.*
 
+### The four charts about turns
+
+- **What became of each turn** -- the three things that can go wrong with a
+  turn, on one scale. Losing it outright is the rarest. Getting the words right
+  and the speaker wrong is by far the most common, between an eighth and a
+  quarter of every turn in the corpus.
+- **Turns that never made it into the transcript** -- the loss rate on its own,
+  split by how long the turn ran.
+- **When a turn is missing, how far away is the nearest word** -- the chart that
+  says how to read the other two. A missing turn with a word a tenth of a second
+  away is a boundary drawn approximately. A missing turn with nothing for
+  forty-four seconds is a lost stretch of interview.
+- **What became of each turn, by who was speaking** -- the same three failures
+  for the interviewer and for the participant. Our pipeline puts the
+  participant's words on the wrong speaker in 29% of their turns against 20% for
+  the interviewer. Since the participant's answers are the data, that is the
+  worse way round, and it is the one number here that argues for the other
+  team's diarization.
+
 ## "Speaker error" (charts say **DER confusion**, or **sWER**)
 
 Two different ways of asking whether the right words got attached to the right
