@@ -2573,6 +2573,75 @@ def pii_leak_svg(data: dict | None, kinds: dict | None = None,
     return "".join(out), width, height
 
 
+def pii_identifier_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
+    """Distinct people or details still readable somewhere in the transcript.
+
+    The other privacy question, and the one the leak rate was quietly answering
+    before it was fixed: not "did this occurrence survive" but "can this person
+    still be identified at all". A name marked seventeen times and redacted
+    sixteen times is one identifier still readable, not sixteen successes and
+    one failure -- and certainly not seventeen failures, which is what charging
+    a transcript-wide search to every occurrence produced.
+    """
+    rows = [
+        (n, p, c, s) for n, p, c, s in _redaction_rows(data)
+        if s.get("identifiers_testable")
+    ]
+    if not rows:
+        return "", 0, 0
+
+    colour = LEAK_KIND_COLOURS["single word"]
+    line_h = 14
+    max_lines = max(len(_label_lines(p)) for _, p, _, _ in rows)
+    row_h = max(26, max_lines * line_h + 6)
+    gap, pad_l, pad_r, pad_t, pad_b = 16, 250, 190, 22, 30
+    plot_w = 300
+    height = pad_t + len(rows) * (row_h + gap) + pad_b + (30 if legend else 0)
+    width = pad_l + plot_w + pad_r
+    total = max(s["identifiers_testable"] for _, _, _, s in rows)
+
+    out = [
+        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+        f'role="img" aria-label="identifiers still readable somewhere">'
+    ]
+    for fraction in (0.0, 0.5, 1.0):
+        gx = pad_l + plot_w * fraction
+        out.append(
+            f'<line x1="{gx:.1f}" y1="{pad_t - 4}" x2="{gx:.1f}" '
+            f'y2="{pad_t + len(rows) * (row_h + gap) - gap}" stroke="{GRIDLINE}" '
+            f'stroke-width="1"/>'
+            f'<text x="{gx:.1f}" y="{pad_t + len(rows) * (row_h + gap) - gap + 15}" '
+            f'text-anchor="middle" class="tick">{total * fraction:.0f}</text>'
+        )
+    for index, (_name, parts, _system_colour, stats) in enumerate(rows):
+        y = pad_t + index * (row_h + gap)
+        lines = _label_lines(parts)
+        first = y + (row_h - len(lines) * line_h) / 2 + line_h - 4
+        for line_index, text in enumerate(lines):
+            out.append(
+                f'<text x="{pad_l - 14}" y="{first + line_index * line_h:.1f}" '
+                f'text-anchor="end" class="cat">{escape(text)}</text>'
+            )
+        readable = stats["identifiers_readable"]
+        testable = stats["identifiers_testable"]
+        cy = y + (row_h - 14) / 2
+        w = plot_w * readable / total
+        out.append(
+            f'<rect x="{pad_l}" y="{cy:.1f}" width="{max(w, 0.6):.1f}" height="14" '
+            f'fill="{colour}"/>'
+            f'<text x="{pad_l + w + 8:.1f}" y="{cy + 11:.1f}" class="val">'
+            f'{readable} of {testable}  ({readable / testable * 100:.1f}%)</text>'
+        )
+    if legend:
+        block, _tail = swatch_legend(
+            [("still readable somewhere in the transcript", colour, "")],
+            width - pad_l, height - 12, columns=1,
+        )
+        out.append(f'<g transform="translate({pad_l - 34},0)">{block}</g>')
+    out.append("</svg>")
+    return "".join(out), width, height
+
+
 # --- where the aggregate win comes from -------------------------------------
 
 # The two systems the head-to-head compares: the incumbent and our pipeline.

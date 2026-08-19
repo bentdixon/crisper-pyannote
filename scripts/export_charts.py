@@ -54,6 +54,7 @@ from plot_results import (  # noqa: E402
     pii_confusion_svg,
     pii_f1_svg,
     pii_leak_svg,
+    pii_identifier_svg,
     leak_type_svg,
     redaction_svg,
     taxonomy_svg,
@@ -281,8 +282,10 @@ def validation_figures(validation: dict | None, kinds: dict | None,
     out.append(("pii-leak-rate", *titled(
         "Names and details still readable", "lower is better",
         svg, w, h,
-        "The strictest test: after the system has run, is the real word still sitting "
-        "there where anyone could read it? Only items whose original wording the typist "
+        "After the system has run, is the real word still sitting there, at the point "
+        "in the interview where it was said? Counted once per mention, so a name "
+        "blanked here and missed later counts once each way; the next chart counts "
+        "each name once instead. Only items whose original wording the typist "
         "left intact can be checked this way -- five of the ten sites deleted the words "
         "as they typed, leaving nothing to search for. The split is by what kind of text "
         "was left readable, not by a judgement on it: a bare month counts here while "
@@ -290,6 +293,22 @@ def validation_figures(validation: dict | None, kinds: dict | None,
         "would be and what still needs a person to look at it.",
         clean=clean,
     )))
+    svg, w, h = pii_identifier_svg(validation, legend=True)
+    if svg:
+        out.append(("pii-identifiers-readable", *titled(
+            "People and details you could still identify",
+            "lower is better; counted once per name, not once per mention",
+            svg, w, h,
+            "The same question asked per person rather than per mention. A first "
+            "name said seventeen times in one interview is one identifiable person, "
+            "however many of those mentions a system blanked -- so if any mention "
+            "survives, that person is still identifiable. This is the number to "
+            "quote when the question is whether an interview could be released. The "
+            "previous chart answers the different question of how much of the "
+            "identifying material a system catches mention by mention.",
+            clean=clean,
+        )))
+
     return out
 
 

@@ -207,12 +207,19 @@ retypes the sentence with the names removed.*
 
 ## The headline numbers, all 269 interviews
 
-| | finds | correct | still readable |
-|---|---:|---:|---:|
-| **our turn-by-turn method** | **81%** | 44% | **17 of 306** |
-| our chunk-by-chunk method | 78% | 45% | 31 of 306 |
-| Google Chirp-3, on its own | 65% | 28% | 52 of 306 |
-| Chirp-3 put through verbatimize | 9% | 27% | 197 of 306 |
+| | finds | correct | mentions still readable | people still identifiable |
+|---|---:|---:|---:|---:|
+| **our turn-by-turn method** | **81%** | 44% | **15 of 306** | **14 of 122** |
+| our chunk-by-chunk method | 78% | 45% | 18 of 306 | 16 of 122 |
+| Google Chirp-3, on its own | 65% | 28% | 31 of 306 | 21 of 122 |
+| Chirp-3 put through verbatimize | 9% | 27% | 144 of 306 | 72 of 122 |
+
+The last two columns answer different questions and both are worth showing. A
+first name said seventeen times in one interview is seventeen mentions but one
+person. If a system blanks sixteen of them, that is sixteen mentions handled and
+one missed -- and one person who is still identifiable. Counting per mention
+says how thorough a system is; counting per person says whether the interview
+could be released.
 
 **Slide line:** *Our best method finds a quarter more of the identifying
 information than Google's, blanks out less of everything else, and leaves a

@@ -846,20 +846,28 @@ Matching is by token alignment, not timestamps: a gold span and a placeholder
 share no surface text ("isaiah" against "[PERSON_NAME]"), so they land in the
 same difflib replace block, which is exactly the correspondence needed.
 
-`outputs/redaction.json`, all 269 visits:
+`outputs/redaction_full.json`, all 269 visits, after the leak-test fix of
+2026-08-19 (see below -- **any leak figure written before that date is wrong**,
+including the 10.3 / 12.9 / 16.8 / 64.2 this table used to carry):
 
-    system                          recall  precision      F1   leak
-    community-1 + Gemma 4 31B        73.5%      44.1%   55.1%  10.3%
-    pyannote 3.1 + Gemma 4 31B       73.8%      41.6%   53.2%  12.9%
-    chirp3 (native)                  63.8%      27.9%   38.8%  16.8%
-    verbatimize                       8.5%      27.4%   12.9%  64.2%
-    ours / baseline (no redaction)     0 %          -       0%  ~75%
+    system                             recall  precision      F1   leak   names
+    community-1 + Gemma, turn rewrite   80.6%      44.1%   57.0%   4.9%   11.5%
+    community-1 + Gemma, chunk          77.6%      45.1%   57.0%   5.9%   13.1%
+    community-1 + Gemma, chunk (pre)    74.4%      44.1%   55.4%   6.2%   13.9%
+    pyannote 3.1 + Gemma                74.8%      41.6%   53.5%   6.5%   14.8%
+    chirp3 (native)                     64.6%      27.9%   38.9%  10.1%   17.2%
+    verbatimize                          8.6%      27.4%   13.0%  47.1%   59.0%
+    ours / baseline (no redaction)        0 %          -       0%      -       -
+
+    leak    of 306 checkable mentions, how many still read at that point
+    names   of 122 distinct identifiers, how many read anywhere in the file
 
 - **Gemma beats Chirp-3's native redaction on every measure** while redacting
-  *less* (1449 spans vs 1996): 10 points more sensitive, 16 more precise, and
-  a third lower leak rate.
+  *less* (1449 spans vs 1996): 10-16 points more sensitive, 16 more precise,
+  and half the leak rate.
 - **verbatimize re-identifies Chirp's redacted output.** It destroys 87% of
-  Chirp's redactions and takes the leak rate from 16.8% to 64.2%. Verified by
+  Chirp's redactions and takes the leak rate from 10.1% to 47.1%, and the share
+  of identifiers readable somewhere from 17.2% to 59.0%. Verified by
   hand: `[DATE]. [DATE].` -> "May ninth", `[AGE]` -> "three". The verbatimize
   task transcribes from audio using Chirp's text as a guide, so where Chirp
   wrote a placeholder the model simply hears the real words. A pipeline that
@@ -1018,9 +1026,46 @@ it must never look like a chunk with no PII in it.
 (site, subject, session, system, identifier, both contexts) for inspection.
 **That file is PII in the clear by construction** -- it lives at
 `outputs/private/leaks.csv` on the cluster, never in the repo, never in an
-artifact. 736 rows across 18 participants, of which 32 are `redacted=1` yet
-still leaked: the system caught one occurrence of a name and missed another,
-which is the worst outcome because the transcript looks de-identified.
+artifact. Rows now carry both `leaked` (this mention) and `readable_elsewhere`
+(the same name anywhere in the file), so the case that matters most -- caught
+here, missed later, transcript looks de-identified -- is visible as the
+combination rather than hidden inside one flag.
+
+### The leak test counted a mention it had redacted (fixed 2026-08-19)
+
+`redaction.py` searched the **whole** system transcript for the surface form
+and charged the result to **every** occurrence of it. On
+SI00132/day0223_session004 a first name is marked seventeen times, Chirp-3
+redacted eleven of them, and all seventeen were written to the leaks CSV as
+leaked -- each with a `system_context` column showing the `[PERSON_NAME]` that
+had correctly replaced it. Found by reading a row and asking why the identifier
+was not in the text beside it.
+
+The bias runs against the systems that redact best, because they are the ones
+with many redacted-but-not-all names. Of each system's recorded leaks, the
+share whose own mention was redacted:
+
+    Gemma arms          50-58%
+    chirp3              31%
+    verbatimize          6%
+
+Two questions were being conflated, and both are now reported. `leaked` tests
+the mention against the system tokens it projects onto. `identifier_leak_rate`
+counts each distinct identifier once and asks whether it survives anywhere --
+which is what the transcript-wide search was really answering, and is the
+number to quote when the question is whether an interview can be released.
+Adjacent mentions that fall in one alignment block still share a region and are
+both charged; that is a genuine ambiguity about which of them was redacted, not
+something a wider or narrower window fixes.
+
+Corpus-wide effect on the leak counts (of 306 checkable mentions):
+
+    chirp3        52 -> 31        verbatimize   197 -> 144
+    chunk+poss    31 -> 18        turn+poss      17 -> 15
+
+The ranking is unchanged; the levels drop by a third to a half and the gaps
+between the Gemma arms compress to 3-5 mentions, which is well inside the
+noise the validation set already showed (4 spans against 1, p=0.375).
 
 Not yet done: the paper reports per-category F1 (names / dates / locations),
 which needs labelled gold. The brace convention carries no label. If the
