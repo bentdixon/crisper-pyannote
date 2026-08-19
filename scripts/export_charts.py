@@ -247,38 +247,41 @@ def validation_figures(validation: dict | None, kinds: dict | None,
     visits = max((e.get("visits", 0) for e in validation["aggregate"].values()), default=0)
     gold = max((e.get("gold_spans", 0) for e in validation["aggregate"].values()), default=0)
     out.append(("pii-detection-f1", *titled(
-        "PII span detection", "higher is better",
+        "How much identifying information each system finds", "higher is better",
         svg, w, h,
-        f"Span-level detection against the human transcripts' own annotation, over "
-        f"{visits} transcripts and {gold} gold spans, each scored on the span the "
-        f"transcript covers. Recall is the share of marked spans a system redacted; "
-        f"precision the share of its redactions that landed on one. Precision is a "
-        f"lower bound throughout: an identifier nobody marked counts against the "
-        f"system that caught it, and only some transcripts carry any annotation.",
+        f"The people who typed these interviews wrapped anything identifying -- a "
+        f"name, a date, a place -- in braces. That is the answer key: {gold} marked "
+        f"items across {visits} interviews, counted only over the part of each "
+        f"interview a typist actually covered. Found: how much of it the system "
+        f"blanked out. Correct: how much of what it blanked out had been marked. "
+        f"Correct is an underestimate -- only about half the interviews carry any "
+        f"marking, so blanking a real name nobody marked counts against the system.",
         clean=clean,
     )))
     svg, w, h = pii_confusion_svg(validation)
     out.append(("pii-confusion", *titled(
-        "Where each redactor's decisions land", "counts, not rates",
+        "What each system did with the marked items", "counts, not rates",
         svg, w, h,
-        "The three outcomes span detection admits. There is no true-negative cell: "
-        "the annotation records where PII is, never where it is not, so the negatives "
-        "are every other token in the transcript and any accuracy figure built on "
-        "them would be dominated by ordinary speech. Cells are shaded within their "
-        "own column, because caught, missed and extra are on different scales.",
+        "The three things that can happen to a marked item. There is no fourth cell "
+        "for 'correctly left alone': the answer key records where identifying "
+        "information is, never where it is not, so that count would be every ordinary "
+        "word in the interview, about a million of them. An accuracy figure built on "
+        "those would read 99.9% for every system, including one that blanks out "
+        "nothing. Cells are shaded within their own column, because the three counts "
+        "are on different scales.",
         clean=clean,
     )))
     svg, w, h = pii_leak_svg(validation, kinds, legend=True)
     out.append(("pii-leak-rate", *titled(
-        "Identifiers leaked", "lower is better",
+        "Names and details still readable", "lower is better",
         svg, w, h,
-        "A leak is a gold span whose surface form survives verbatim in the output -- "
-        "the privacy question asked directly, with no alignment step to trust. The "
-        "split is by the shape of the leaked text, not by a verdict on it: the "
-        "annotation marks material that identifies nobody, so a bare month or a "
-        "sentence about religion counts as a leak while being harmless. The red "
-        "segment is single words, which is where a name would be and what still "
-        "needs a human read.",
+        "The strictest test: after the system has run, is the real word still sitting "
+        "there where anyone could read it? Only items whose original wording the typist "
+        "left intact can be checked this way -- five of the ten sites deleted the words "
+        "as they typed, leaving nothing to search for. The split is by what kind of text "
+        "was left readable, not by a judgement on it: a bare month counts here while "
+        "identifying nobody. The red segment is single words, which is where a name "
+        "would be and what still needs a person to look at it.",
         clean=clean,
     )))
     return out

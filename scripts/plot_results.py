@@ -824,12 +824,18 @@ def leak_type_svg(data: dict | None, legend: bool = False) -> tuple[str, int, in
 
 
 def exposure_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
-    """Per-transcript exposure: how many transcripts are clean, and how badly
-    the rest are not.
+    """Per transcript, how many human-marked identifiers each system left alone.
 
     A distribution rather than a mean, because the question is operational --
     "can I release this transcript" is asked one transcript at a time, and an
-    average of 27% exposed tells you nothing about how many files are safe.
+    average tells you nothing about how many files are safe.
+
+    Counted over the items a transcriber marked, and nothing else. An earlier
+    version counted every place any system had put a label, which made the
+    figure depend on how freely the other systems label: the most over-eager
+    system proposes the most places, every other system is charged with leaving
+    them open, and the ranking inverts. Chirp-3 led that version while leading
+    none of the measures with a human behind them.
     """
     if not data:
         return "", 0, 0
@@ -841,8 +847,9 @@ def exposure_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int
         if not entry:
             continue
         values = sorted(
-            registry.entry_of(v, name)["exposed"]
+            registry.entry_of(v, name).get("gold_exposed", 0)
             for v in per_visit.values() if registry.entry_of(v, name)
+            and registry.entry_of(v, name).get("gold_locations")
         )
         if not values:
             continue
@@ -2351,11 +2358,11 @@ def pii_f1_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
     tail = 0
     if legend:
         items = [
-            ("recall", METRIC_COLOURS["recall"],
-             "share of the human-marked spans the system redacted"),
-            ("precision", METRIC_COLOURS["precision"],
-             "share of its redactions that landed on a marked span"),
-            ("F1", METRIC_COLOURS["f1"], "their harmonic mean"),
+            ("found", METRIC_COLOURS["recall"],
+             "of everything a transcriber marked, how much the system blanked out"),
+            ("correct", METRIC_COLOURS["precision"],
+             "of everything the system blanked out, how much had been marked"),
+            ("combined", METRIC_COLOURS["f1"], "the two above balanced into one number"),
         ]
         block, tail = swatch_legend(items, width - pad_l, height - pad_b + 26, columns=1)
         out.append(f'<g transform="translate({pad_l - 34},0)">{block}</g>')
@@ -2440,10 +2447,10 @@ def pii_confusion_svg(data: dict | None, legend: bool = False) -> tuple[str, int
     # Two short lines rather than one long one: the note ran past the right
     # edge of the figure and was cut mid-sentence.
     notes = [
-        f'caught + missed = {rows[0][3].get("gold_spans", 0)} gold spans; '
-        f'extra are redactions on unmarked text',
-        'no true-negative cell: the annotation marks where PII is, '
-        'never where it is not',
+        f'caught + missed = {rows[0][3].get("gold_spans", 0)} items a transcriber '
+        f'marked; extra are blanks the system added elsewhere',
+        'there is no fourth cell: the answer key never records where identifying '
+        'information is absent',
     ]
     for note_index, note in enumerate(notes):
         # Anchored at the figure's left margin, not the label column: starting
@@ -2525,7 +2532,7 @@ def pii_leak_svg(data: dict | None, kinds: dict | None = None,
             x += w
         rate = stats.get("leak_rate")
         testable = stats.get("leak_testable") or 0
-        label = f'{stats.get("leaked") or 0} of {testable}'
+        label = f'{stats.get("leaked") or 0} of {testable} checkable'
         if rate is not None:
             label += f'  ({rate * 100:.1f}%)'
         out.append(
