@@ -2505,17 +2505,21 @@ def pii_leak_svg(data: dict | None, kinds: dict | None = None,
     height = pad_t + len(rows) * (row_h + gap) + pad_b
     width = pad_l + plot_w + pad_r
 
+    def leaked_of(stats: dict) -> int:
+        # Near-miss is the reported measure: a name the recogniser spelled
+        # differently still identifies the person. The exact count remains in
+        # the results file.
+        value = stats.get("leaked_fuzzy")
+        return (stats.get("leaked") or 0) if value is None else value
+
     def counts_for(name: str, stats: dict) -> list[tuple[str, int]]:
         entry = registry.entry_of(kinds or {}, name) or {}
         found = entry.get("kinds") or {}
         if found:
             return [(k, found[k]) for k in order if found.get(k)]
-        return [("single word", stats.get("leaked") or 0)]
+        return [("single word", leaked_of(stats))]
 
-    peak = max(
-        max((s.get("leaked") or 0) for _, _, _, s in rows),
-        1,
-    )
+    peak = max(max(leaked_of(s) for _, _, _, s in rows), 1)
     out = [
         f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
         f'role="img" aria-label="Leaked identifiers by system">'
@@ -2548,9 +2552,9 @@ def pii_leak_svg(data: dict | None, kinds: dict | None = None,
                 f'fill="{LEAK_KIND_COLOURS[kind_name]}"/>'
             )
             x += w
-        rate = stats.get("leak_rate")
+        rate = stats.get("leak_rate_fuzzy", stats.get("leak_rate"))
         testable = stats.get("leak_testable") or 0
-        label = f'{stats.get("leaked") or 0} of {testable} checkable'
+        label = f'{leaked_of(stats)} of {testable} checkable'
         if rate is not None:
             label += f'  ({rate * 100:.1f}%)'
         out.append(
@@ -2622,7 +2626,9 @@ def pii_identifier_svg(data: dict | None, legend: bool = False) -> tuple[str, in
                 f'<text x="{pad_l - 14}" y="{first + line_index * line_h:.1f}" '
                 f'text-anchor="end" class="cat">{escape(text)}</text>'
             )
-        readable = stats["identifiers_readable"]
+        readable = stats.get(
+            "identifiers_readable_fuzzy", stats["identifiers_readable"]
+        )
         testable = stats["identifiers_testable"]
         cy = y + (row_h - 14) / 2
         w = plot_w * readable / total

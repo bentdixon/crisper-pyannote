@@ -210,9 +210,15 @@ retypes the sentence with the names removed.*
 | | finds | correct | mentions still readable | people still identifiable |
 |---|---:|---:|---:|---:|
 | **our turn-by-turn method** | **81%** | 44% | **15 of 306** | **14 of 122** |
-| our chunk-by-chunk method | 78% | 45% | 18 of 306 | 16 of 122 |
-| Google Chirp-3, on its own | 65% | 28% | 31 of 306 | 21 of 122 |
-| Chirp-3 put through verbatimize | 9% | 27% | 144 of 306 | 72 of 122 |
+| our chunk-by-chunk method | 78% | 45% | 22 of 306 | 19 of 122 |
+| Google Chirp-3, on its own | 65% | 28% | 38 of 306 | 24 of 122 |
+| Chirp-3 put through verbatimize | 9% | 27% | 165 of 306 | 77 of 122 |
+
+"Still readable" counts a near-miss. If the typist wrote *Jayden* and the
+software wrote *jaden*, the person is just as identifiable, so that counts as
+left readable. Only near-misses close enough to read are counted, and words
+under five letters are matched exactly, because short words resemble each other
+by accident. Every one of the 36 near-misses this added was checked by hand.
 
 The last two columns answer different questions and both are worth showing. A
 first name said seventeen times in one interview is seventeen mentions but one

@@ -282,10 +282,14 @@ def validation_figures(validation: dict | None, kinds: dict | None,
     out.append(("pii-leak-rate", *titled(
         "Names and details still readable", "lower is better",
         svg, w, h,
-        "After the system has run, is the real word still sitting there, at the point "
-        "in the interview where it was said? Counted once per mention, so a name "
-        "blanked here and missed later counts once each way; the next chart counts "
-        "each name once instead. Only items whose original wording the typist "
+        "After the system has run, is the marked wording still sitting there, at the "
+        "point in the interview where it was said? A near-miss counts: a name the "
+        "recogniser spelled differently still identifies the person, so Jayden "
+        "written as jaden is a leak. That adds 36 mentions corpus-wide, all of them "
+        "checked by hand, and terms under five characters stay on an exact test "
+        "because short words match each other by accident. Counted once per mention, "
+        "so a name blanked here and missed later counts once each way; the next "
+        "chart counts each name once instead. Only items whose original wording the typist "
         "left intact can be checked this way -- five of the ten sites deleted the words "
         "as they typed, leaving nothing to search for. The split is by what kind of text "
         "was left readable, not by a judgement on it: a bare month counts here while "
@@ -302,7 +306,8 @@ def validation_figures(validation: dict | None, kinds: dict | None,
             "The same question asked per person rather than per mention. A first "
             "name said seventeen times in one interview is one identifiable person, "
             "however many of those mentions a system blanked -- so if any mention "
-            "survives, that person is still identifiable. This is the number to "
+            "survives, in the marked spelling or one close enough to read, that "
+            "person is still identifiable. This is the number to "
             "quote when the question is whether an interview could be released. The "
             "previous chart answers the different question of how much of the "
             "identifying material a system catches mention by mention.",

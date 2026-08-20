@@ -836,22 +836,24 @@ including the 10.3 / 12.9 / 16.8 / 64.2 this table used to carry):
 
     system                             recall  precision      F1   leak   names
     community-1 + Gemma, turn rewrite   80.6%      44.1%   57.0%   4.9%   11.5%
-    community-1 + Gemma, chunk          77.6%      45.1%   57.0%   5.9%   13.1%
-    community-1 + Gemma, chunk (pre)    74.4%      44.1%   55.4%   6.2%   13.9%
-    pyannote 3.1 + Gemma                74.8%      41.6%   53.5%   6.5%   14.8%
-    chirp3 (native)                     64.6%      27.9%   38.9%  10.1%   17.2%
-    verbatimize                          8.6%      27.4%   13.0%  47.1%   59.0%
+    community-1 + Gemma, chunk          77.6%      45.1%   57.0%   7.2%   15.6%
+    community-1 + Gemma, chunk (pre)    74.4%      44.1%   55.4%   7.5%   16.4%
+    pyannote 3.1 + Gemma                74.8%      41.6%   53.5%   7.8%   17.2%
+    chirp3 (native)                     64.6%      27.9%   38.9%  12.4%   19.7%
+    verbatimize                          8.6%      27.4%   13.0%  53.9%   63.1%
     ours / baseline (no redaction)        0 %          -       0%      -       -
 
-    leak    of 306 checkable mentions, how many still read at that point
+    leak    of 306 checkable mentions, how many still read at that point,
+            counting a near-miss spelling (see below); exact-only figures are
+            4.9 / 5.9 / 6.2 / 6.5 / 10.1 / 47.1 and stay in the results file
     names   of 122 distinct identifiers, how many read anywhere in the file
 
 - **Gemma beats Chirp-3's native redaction on every measure** while redacting
   *less* (1449 spans vs 1996): 10-16 points more sensitive, 16 more precise,
   and half the leak rate.
 - **verbatimize re-identifies Chirp's redacted output.** It destroys 87% of
-  Chirp's redactions and takes the leak rate from 10.1% to 47.1%, and the share
-  of identifiers readable somewhere from 17.2% to 59.0%. Verified by
+  Chirp's redactions and takes the leak rate from 12.4% to 53.9%, and the share
+  of identifiers readable somewhere from 19.7% to 63.1%. Verified by
   hand: `[DATE]. [DATE].` -> "May ninth", `[AGE]` -> "three". The verbatimize
   task transcribes from audio using Chirp's text as a guide, so where Chirp
   wrote a placeholder the model simply hears the real words. A pipeline that
@@ -900,7 +902,12 @@ a recogniser rendering that shares few letters with the marked form
 (similarity 0.61 in the synthetic check) is missed by both tests.
 
 Ranking is unchanged, and turn-rewrite mode gains nothing -- it was already
-catching those mentions.
+catching those mentions, which is a small independent point in its favour.
+
+**Near-miss is the reported measure as of 2026-08-20**, in `leak_rate_fuzzy`,
+`identifier_leak_rate_fuzzy`, both PII figures and the leak-shape counts. The
+exact figures stay in the results file. The privacy question is whether the
+person can be identified, not whether a particular string survived.
 
 ### Turn-rewrite mode, and why it did not replace chunking (2026-08-13)
 
