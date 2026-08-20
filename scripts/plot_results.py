@@ -2577,6 +2577,104 @@ def pii_leak_svg(data: dict | None, kinds: dict | None = None,
     return "".join(out), width, height
 
 
+def pii_overredaction_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
+    """How much each system blanks out, against how much the typists marked.
+
+    The detection figure reports precision, which answers this as a rate and
+    buries the scale. What a reviewer actually wants to know before releasing a
+    transcript is how much ordinary speech comes back blanked, and that is a
+    count: every system except verbatimize places well over a thousand
+    placeholders against 876 marked items, so most of what they blank was never
+    marked as identifying by anyone.
+
+    Read against the reference line, not between the bars. The line is the 876
+    items the transcribers marked, and a bar's overhang past it is the scale of
+    the over-redaction. Precision cannot show that a system is blanking twice
+    as much text as the answer key contains.
+
+    The caveat that keeps this honest: only about half the transcripts carry
+    any marking at all, so an unmarked genuine identifier a system correctly
+    catches lands in the "extra" segment. The overhang is an upper bound on
+    over-redaction, not a count of mistakes.
+    """
+    rows = [
+        (n, p, c, st) for n, p, c, st in _redaction_rows(data)
+        if st.get("predicted_spans")
+    ]
+    if not rows:
+        return "", 0, 0
+
+    matched_colour = OUTCOME_COLOURS["caught"]
+    extra_colour = OUTCOME_COLOURS["extra"]
+    line_h = 14
+    max_lines = max(len(_label_lines(p)) for _, p, _, _ in rows)
+    row_h = max(26, max_lines * line_h + 6)
+    gap, pad_l, pad_r, pad_t, pad_b = 16, 250, 190, 34, 34
+    plot_w = 300
+    height = pad_t + len(rows) * (row_h + gap) + pad_b + (44 if legend else 0)
+    width = pad_l + plot_w + pad_r
+
+    gold = max(st.get("gold_spans") or 0 for _, _, _, st in rows)
+    peak = max(max(st["predicted_spans"] for _, _, _, st in rows), gold, 1)
+
+    def x(value: float) -> float:
+        return pad_l + plot_w * value / peak
+
+    out = [
+        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+        f'role="img" aria-label="how much each system blanks out against the '
+        f'marked items">'
+    ]
+    body = pad_t + len(rows) * (row_h + gap) - gap
+    for index, (_name, parts, _colour, stats) in enumerate(rows):
+        y = pad_t + index * (row_h + gap)
+        lines = _label_lines(parts)
+        first = y + (row_h - len(lines) * line_h) / 2 + line_h - 4
+        for line_index, text in enumerate(lines):
+            out.append(
+                f'<text x="{pad_l - 14}" y="{first + line_index * line_h:.1f}" '
+                f'text-anchor="end" class="cat">{escape(text)}</text>'
+            )
+        # Both segments must be counted on the prediction side. true_positives
+        # counts marked items that were caught, which is the other side of the
+        # alignment: one placeholder can cover two marked items, so
+        # true_positives + false_positives overshoots the placeholders actually
+        # placed (2031 against Chirp-3's real 1996).
+        extra = stats["false_positives"]
+        matched = max(stats["predicted_spans"] - extra, 0)
+        cy = y + (row_h - 14) / 2
+        out.append(
+            f'<rect x="{pad_l}" y="{cy:.1f}" width="{max(x(matched) - pad_l, 0.6):.1f}" '
+            f'height="14" fill="{matched_colour}"/>'
+            f'<rect x="{x(matched):.1f}" y="{cy:.1f}" '
+            f'width="{max(x(matched + extra) - x(matched), 0.6):.1f}" height="14" '
+            f'fill="{extra_colour}"/>'
+            f'<text x="{x(matched + extra) + 8:.1f}" y="{cy + 11:.1f}" class="val">'
+            f'{stats["predicted_spans"]} blanks, '
+            f'{stats["predicted_spans"] / gold:.1f}x marked</text>'
+        )
+
+    # The reference line last, so it sits over the bars it is read against.
+    gx = x(gold)
+    out.append(
+        f'<line x1="{gx:.1f}" y1="{pad_t - 12}" x2="{gx:.1f}" y2="{body + 6}" '
+        f'stroke="{MUTED_DARK}" stroke-width="1.5" stroke-dasharray="4 3"/>'
+        f'<text x="{gx:.1f}" y="{pad_t - 18}" text-anchor="middle" class="leg">'
+        f'{gold} items the transcribers marked</text>'
+    )
+    if legend:
+        block, _tail = swatch_legend(
+            [
+                ("blanked something the transcribers marked", matched_colour, ""),
+                ("blanked something they did not mark", extra_colour, ""),
+            ],
+            width - pad_l, height - 34, columns=1,
+        )
+        out.append(f'<g transform="translate({pad_l - 240},0)">{block}</g>')
+    out.append("</svg>")
+    return "".join(out), width, height
+
+
 def pii_identifier_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
     """Distinct people or details still readable somewhere in the transcript.
 

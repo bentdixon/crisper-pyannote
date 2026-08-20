@@ -55,6 +55,7 @@ from plot_results import (  # noqa: E402
     pii_f1_svg,
     pii_leak_svg,
     pii_identifier_svg,
+    pii_overredaction_svg,
     leak_type_svg,
     redaction_svg,
     taxonomy_svg,
@@ -299,6 +300,26 @@ def validation_figures(validation: dict | None, kinds: dict | None,
         "would be and what still needs a person to look at it.",
         clean=clean,
     )))
+    svg, w, h = pii_overredaction_svg(validation, legend=True)
+    if svg:
+        out.append(("pii-over-redaction", *titled(
+            "How much each system blanks out",
+            "compared with how much the transcribers marked",
+            svg, w, h,
+            "The transcribers marked 876 identifying items across these interviews. "
+            "Every automatic system except verbatimize blanks out well over a "
+            "thousand things, so most of what comes back blanked was never marked by "
+            "anyone. Chirp-3 is the heaviest -- 1,996 blanks, more than twice the "
+            "answer key -- and our Gemma methods sit between 1,449 and 1,579. One "
+            "caveat keeps this from being a count of mistakes: only about half these "
+            "transcripts carry any marking at all, so a genuine name nobody marked "
+            "counts in the orange segment against the system that caught it. The "
+            "overhang past the line is an upper bound on over-blanking, and the "
+            "direction of travel is what matters: these systems are cautious, and "
+            "cautious costs readable text.",
+            clean=clean,
+        )))
+
     svg, w, h = pii_identifier_svg(validation, legend=True)
     if svg:
         out.append(("pii-identifiers-readable", *titled(
