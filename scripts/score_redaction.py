@@ -191,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
             for key in (
                 "gold_spans", "predicted_spans", "true_positives",
                 "false_positives", "false_negatives", "leak_testable", "leaked",
-                "identifiers_testable", "identifiers_readable",
+                "leaked_fuzzy", "identifiers_testable", "identifiers_readable",
             ):
                 totals[name][key] += result[key]
             categories[name].update(result["categories"])
@@ -206,8 +206,8 @@ def main(argv: list[str] | None = None) -> int:
                     # system did redact, whose name survives elsewhere. Worth
                     # reading, so it is written, and flagged rather than
                     # counted as this occurrence leaking.
-                    if not (span["leaked"] or span.get("readable_somewhere")
-                            or args.all_spans):
+                    if not (span["leaked"] or span.get("leaked_fuzzy")
+                            or span.get("readable_somewhere") or args.all_spans):
                         continue
                     leak_rows.append({
                         "site": site,
@@ -217,6 +217,9 @@ def main(argv: list[str] | None = None) -> int:
                         "span": order,
                         "identifier": span["surface"],
                         "leaked": int(span["leaked"]),
+                        "leaked_fuzzy": int(span.get("leaked_fuzzy", False)),
+                        "similarity": span.get("similarity", ""),
+                        "nearest_text": span.get("nearest_text", ""),
                         "readable_elsewhere": int(span.get("readable_somewhere", False)),
                         "redacted": int(span["redacted"]),
                         "leak_testable": int(span["testable"]),
@@ -269,6 +272,15 @@ def main(argv: list[str] | None = None) -> int:
                 counter["leaked"] / counter["leak_testable"]
                 if counter["leak_testable"] else None
             ),
+            # The same test allowing a near-miss spelling, at
+            # redaction.FUZZY_THRESHOLD. Reported beside the exact figure
+            # rather than replacing it, because the threshold is a judgement
+            # and the exact count is not.
+            "leaked_fuzzy": counter["leaked_fuzzy"],
+            "leak_rate_fuzzy": (
+                counter["leaked_fuzzy"] / counter["leak_testable"]
+                if counter["leak_testable"] else None
+            ),
             # The other privacy question: not "did this occurrence survive" but
             # "can this person still be identified anywhere in the transcript".
             # One entry per distinct identifier per visit, so a name marked
@@ -306,6 +318,10 @@ def main(argv: list[str] | None = None) -> int:
                 ("under", f"{stats['under_rate'] * 100:.1f}%"),
                 ("over", f"{stats['over_rate'] * 100:.1f}%"),
                 ("leak", leak),
+                ("leak (near-miss)", (
+                    f"{stats['leak_rate_fuzzy'] * 100:.1f}%"
+                    if stats["leak_rate_fuzzy"] is not None else "-"
+                )),
                 ("names readable", named),
             ],
         ))
@@ -318,7 +334,8 @@ def main(argv: list[str] | None = None) -> int:
         leak_rows.sort(key=lambda r: (r["subject"], r["session"], r["span"], r["system"]))
         fields = [
             "site", "subject", "session", "system", "span", "identifier",
-            "leaked", "readable_elsewhere", "redacted", "leak_testable", "labels",
+            "leaked", "leaked_fuzzy", "similarity", "nearest_text",
+            "readable_elsewhere", "redacted", "leak_testable", "labels",
             "human_context", "system_context",
         ]
         with open(args.leaks_csv, "w", newline="") as handle:

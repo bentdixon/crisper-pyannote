@@ -48,6 +48,15 @@ import difflib
 import re
 from pathlib import Path
 
+try:  # rapidfuzz arrives with jiwer; difflib is the fallback, same scale
+    from rapidfuzz import fuzz as _fuzz
+
+    def similarity(a: str, b: str) -> float:
+        return _fuzz.ratio(a, b) / 100.0
+except ImportError:  # pragma: no cover - environment without rapidfuzz
+    def similarity(a: str, b: str) -> float:
+        return difflib.SequenceMatcher(None, a, b).ratio()
+
 # Exactly the PII labels, never a general uppercase-in-brackets pattern.
 # CrisperWhisper writes its filled pauses and vocal events the same way --
 # [UM], [UH], [LAUGHTER] -- so a broad pattern reads a verbatim transcript as
@@ -60,6 +69,21 @@ PII_LABELS = [
 ]
 PLACEHOLDER = re.compile(r"\[(" + "|".join(PII_LABELS) + r")\]")
 GOLD_SPAN = re.compile(r"\{([^}]*)\}")
+
+# A name can survive a system in a spelling the reference never used -- the
+# typist wrote one form and the recogniser heard another -- and that still
+# identifies the person, so an exact search undercounts leaks and flatters
+# every system. Each marked term therefore records its best character
+# similarity against the text around it, and the threshold is applied on top,
+# so a different cut-off never needs another scoring run.
+#
+# Short terms are excluded from fuzzy matching because they match each other
+# by accident: at 0.85, "no" reaches "now" and "so".
+FUZZY_THRESHOLD = 0.85
+MIN_FUZZY_CHARS = 5
+# A recogniser can merge two words into one or split one into two, so windows
+# one token either side of the term's own length are compared as well.
+WINDOW_SLACK = 1
 
 # "{redacted}" marks a span whose surface form the transcriber already removed,
 # so it can be matched positionally but never leak-tested.
@@ -200,6 +224,27 @@ def project(blocks, start: int, end: int, pad: int = 2) -> tuple[int, int]:
     return max(low - pad, 0), high + pad
 
 
+def best_similarity(needle: str, tokens: list[str]) -> tuple[float, str]:
+    """Closest character match to `needle` among windows of `tokens`.
+
+    Compared window by window rather than as one string, because a single
+    ratio over a long region is dominated by everything that is not the name.
+    """
+    if not needle or not tokens:
+        return 0.0, ""
+    width = len(needle.split())
+    best, matched = 0.0, ""
+    for size in range(max(width - WINDOW_SLACK, 1), width + WINDOW_SLACK + 1):
+        for start in range(0, max(len(tokens) - size + 1, 0)):
+            candidate = " ".join(tokens[start:start + size])
+            score = similarity(needle, candidate)
+            if score > best:
+                best, matched = score, candidate
+                if best == 1.0:
+                    return best, matched
+    return best, matched
+
+
 def context(tokens: list[str], start: int, end: int, width: int = 7) -> str:
     """Surrounding words, for a human reading a leak report."""
     return " ".join(tokens[max(start - width, 0):min(end + width, len(tokens))])
@@ -249,15 +294,32 @@ def score_visit(human: Path | list[dict], words: list[dict]) -> dict:
         # if the name survives inside it -- that is a genuine ambiguity about
         # which of them was redacted, not something a wider or narrower window
         # would resolve.
-        region = " ".join(normalize_token(t) for t in hyp_tokens[low:high])
+        region_tokens = [normalize_token(t) for t in hyp_tokens[low:high]]
+        region = " ".join(region_tokens)
         leaked = bool(testable and pattern and re.search(pattern, region))
         # The same surface form anywhere in the output. Aggregated per distinct
         # identifier below; never charged to each occupation of it.
         elsewhere = bool(testable and pattern and re.search(pattern, joined))
+
+        # Closest near-miss, recorded whatever the threshold: a name the
+        # recogniser spelled differently still identifies the person, and the
+        # exact test above cannot see it. Only the local region is scanned this
+        # way -- a fuzzy sweep of the whole transcript would match some other
+        # word in every long interview.
+        fuzzy_ready = testable and needle and len(needle) >= MIN_FUZZY_CHARS
+        score, matched = (
+            best_similarity(needle, region_tokens) if fuzzy_ready else (0.0, "")
+        )
+        if leaked:
+            score, matched = 1.0, needle
         details.append({
             "surface": span["surface"],
             "testable": testable,
             "leaked": leaked,
+            "leaked_fuzzy": bool(score >= FUZZY_THRESHOLD),
+            "similarity": round(score, 3),
+            "nearest_text": matched if not leaked else "",
+            "fuzzy_scored": bool(fuzzy_ready),
             "readable_somewhere": elsewhere,
             "redacted": bool(hit),
             "labels": sorted({predicted[k]["label"] for k in hit}),
@@ -269,6 +331,7 @@ def score_visit(human: Path | list[dict], words: list[dict]) -> dict:
     false_positives = len(predicted) - len(matched_predictions)
     testable_spans = [d for d in details if d["testable"]]
     leaked = sum(1 for d in testable_spans if d["leaked"])
+    leaked_fuzzy = sum(1 for d in testable_spans if d["leaked_fuzzy"])
 
     # One entry per distinct identifier, so a name marked seventeen times
     # counts once toward "can this person still be identified".
@@ -298,6 +361,7 @@ def score_visit(human: Path | list[dict], words: list[dict]) -> dict:
         "f1": f1,
         "leak_testable": len(testable_spans),
         "leaked": leaked,
+        "leaked_fuzzy": leaked_fuzzy,
         "identifiers_testable": len(identifiers),
         "identifiers_readable": sum(1 for v in identifiers.values() if v),
         "categories": categories,
