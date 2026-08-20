@@ -876,6 +876,44 @@ extra segment.
   that caught it. Gemma flagging "Boylston" and "MBTA" (city-identifying,
   unmarked by the transcriber) is the canonical case.
 
+### The leak figure's denominator, and the all-876 version (2026-08-20)
+
+`pii-leak-rate` counts the 306 marked items whose original wording the typist
+left intact, because a verbatim search can only check those. That denominator
+flatters every system: it silently drops the 570 items scrubbed to `{REDACTED}`
+as typed, where the wording cannot be searched for but the system either put a
+placeholder at that position or did not. Quoting "15 of 306, 4.9%" as the leak
+rate is therefore a claim about the checkable subset, not about the corpus.
+
+`pii-marked-left-open` is the same question over all 876, built from
+`outputs/open_marked.json`, with what was left open split by how far it can be
+checked:
+
+    system                     left open   confirmed   unverifiable   absent
+    turn rewrite + poss        172 (19.6%)        13            127       30
+    chunk + poss               203 (23.2%)        15            149       32
+    pyannote 3.1 + Gemma       228 (26.0%)        17            157       47
+    chirp3 (native)            312 (35.6%)        36            222       52
+    verbatimize                801 (91.4%)       165            532      104
+
+"Confirmed" is the leak figure's own number. "Unverifiable" is nothing blanked
+at a position the typist marked and scrubbed -- not proof of a leak, but not
+evidence of safety either, and four to ten times the confirmed count for every
+system. "Absent" is nothing blanked and the marked wording nowhere in the
+transcript, which usually means the recogniser heard it differently or missed
+the speech; those are the least likely to be real leaks. A fifth category,
+`blanked but still readable` (2-7 per system), is the worst case: caught at
+this mention, readable elsewhere.
+
+Ranking is unchanged, and the gap between the arms widens rather than closes,
+so nothing about the comparison rests on the narrow denominator. What changes
+is the absolute claim: not "almost no leaks", but "one marked location in five
+has nothing blanked at it, and most of those cannot be checked by search".
+
+Rows for inspection: `outputs/private/open_marked.csv` on gpu2, 1,716 rows,
+one per marked item not cleanly blanked, carrying `outcome`, the identifier
+where the typist kept it, and both the human and system context.
+
 ### Near-miss spellings count as leaks (2026-08-20)
 
 An exact search for the marked wording misses a name the recogniser spelled

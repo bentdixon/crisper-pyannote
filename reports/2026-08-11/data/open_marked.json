@@ -1,0 +1,58 @@
+{
+  "aggregate": {
+    "Chirp-3 ASR + Chirp-3 diarization + Chirp-3 redaction": {
+      "marked": 876,
+      "blanked": 564,
+      "left_open": 312,
+      "kinds": {
+        "confirmed readable": 36,
+        "wording absent": 52,
+        "unverifiable": 222,
+        "blanked but still readable": 2
+      }
+    },
+    "Chirp-3 ASR + CrisperWhisper 2.0 verbatimize + Chirp-3 diarization": {
+      "marked": 876,
+      "blanked": 75,
+      "left_open": 801,
+      "kinds": {
+        "confirmed readable": 165,
+        "wording absent": 104,
+        "unverifiable": 532
+      }
+    },
+    "CrisperWhisper 2.0 ASR + pyannote 3.1 + Gemma 4 31B redaction": {
+      "marked": 876,
+      "blanked": 648,
+      "left_open": 228,
+      "kinds": {
+        "confirmed readable": 17,
+        "wording absent": 47,
+        "unverifiable": 157,
+        "blanked but still readable": 7
+      }
+    },
+    "CrisperWhisper 2.0 ASR + pyannote community-1 + Gemma 4 31B redaction (possessive rule)": {
+      "marked": 876,
+      "blanked": 673,
+      "left_open": 203,
+      "kinds": {
+        "confirmed readable": 15,
+        "wording absent": 32,
+        "unverifiable": 149,
+        "blanked but still readable": 7
+      }
+    },
+    "CrisperWhisper 2.0 ASR + pyannote community-1 + Gemma 4 31B redaction (turn rewrite, possessive rule)": {
+      "marked": 876,
+      "blanked": 704,
+      "left_open": 172,
+      "kinds": {
+        "confirmed readable": 13,
+        "wording absent": 30,
+        "unverifiable": 127,
+        "blanked but still readable": 2
+      }
+    }
+  }
+}

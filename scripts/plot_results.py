@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import math
 import statistics
 import sys
 from pathlib import Path
@@ -61,6 +62,27 @@ DISTANCE_COLOURS = {
     "a quarter second to one second": "#8a8f3c",
     "one to five seconds": "#d98324",
     "more than five seconds away": "#b3382c",
+}
+
+# The two things that can happen to a turn, counted so they never overlap:
+# either the words are missing from the transcript, or they are in it under
+# the wrong speaker. The superseded presence measure had a third category --
+# "just outside the marked boundary" -- which existed only because that
+# measure counted an approximate turn mark as a missing sentence.
+ROLE_OUTCOME_COLOURS = {
+    "words never transcribed": "#b3382c",
+    "credited to the wrong person": "#7a4fa3",
+}
+
+# What happened to a marked item that was not cleanly blanked, ordered by how
+# firmly it can be called a leak. Distinct hues rather than one colour at
+# several strengths: the middle two categories are judgements about what can be
+# checked, not degrees of the same thing.
+OPEN_MARKED_COLOURS = {
+    "confirmed readable": "#b3382c",
+    "blanked but still readable": "#8a3b8f",
+    "unverifiable": "#d98324",
+    "wording absent": "#6b6f76",
 }
 
 LEAK_KIND_COLOURS = {
@@ -3255,37 +3277,230 @@ def lost_distance_svg(data: dict | None, legend: bool = False) -> tuple[str, int
 
 
 def lost_by_role_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
-    """The same two failures, split by who was speaking.
+    """Per model, what became of the interviewer's turns and the participant's.
 
-    Worth its own panel because the two roles are not interchangeable
-    downstream: the interviewer's questions are the context every later model
-    reads, and the participant's answers are the data. Our pipeline misplaces
-    the participant noticeably more often than the interviewer, which is the
-    worse way round.
+    Hierarchical rather than eight flat rows: the model is named once as a
+    heading and its two roles sit under it, joined by a rule, so the comparison
+    a reader wants -- interviewer against participant *within* a model -- is
+    the one the layout puts side by side.
+
+    Built on the content measure. An earlier version of this figure decomposed
+    the presence measure into lost / just-outside-the-boundary / wrong-speaker,
+    and both of the first two were artefacts: turns tile the timeline, so a
+    presence test is satisfied by the neighbouring speaker and the residue was
+    charged to attribution. That version showed our pipeline misattributing
+    29.4% of participant turns; counted properly it is 6.6%, and the dominant
+    failure is missing words, not misfiled ones.
     """
-    rows = []
-    for _name, parts, _colour, stats in _lost_turn_rows(data):
+    if not data:
+        return "", 0, 0
+    aggregate = data.get("aggregate", {})
+    groups = []
+    for name, parts, _colour, _note in SYSTEMS:
+        stats = registry.entry_of(aggregate, name)
+        if not stats:
+            continue
         by_role = stats.get("by_speaker") or {}
         roles = [r for r in ("INTERVIEWER", "PARTICIPANT") if r in by_role]
-        if len(roles) < 2:
+        if len(roles) < 2 or by_role[roles[0]].get("misattributed_rate") is None:
             continue
-        for position, role in enumerate(roles):
+        rows = []
+        for role in roles:
             entry = by_role[role]
-            lost = entry["lost_rate"]
-            boundary = max(entry["lost_entirely_rate"] - lost, 0.0)
-            wrong = max(entry["lost_to_speaker_rate"] - entry["lost_entirely_rate"], 0.0)
             rows.append((
-                # The system is named on its first row only; the second row
-                # carries just the role, under it in the same column.
-                (_label_lines(parts, limit=36) if position == 0 else []) + [role.lower()],
-                [
-                    ("never transcribed", lost),
-                    ("just outside the marked boundary", boundary),
-                    ("credited to the wrong person", wrong),
-                ],
-                f"{(lost + boundary + wrong) * 100:.1f}% of {entry['turns']}",
+                role.lower(),
+                entry["content_lost_rate"],
+                entry["misattributed_rate"],
+                entry["content_scored"],
             ))
-    return _stacked_rows_svg(
-        rows, "what became of each turn, by role", "share of that role's turns",
-        TURN_OUTCOME_COLOURS, None, legend,
+        groups.append((_label_lines(parts, limit=54), rows))
+    if not groups:
+        return "", 0, 0
+
+    head_h, row_h, row_gap, group_gap = 17, 24, 5, 22
+    line_h = 15
+    pad_l, pad_r, pad_t, pad_b = 150, 108, 16, 34
+    plot_w = 400
+
+    body_h = 0
+    for lines, rows in groups:
+        body_h += len(lines) * line_h + head_h - line_h
+        body_h += len(rows) * (row_h + row_gap) + group_gap
+    key, key_h = ("", 0)
+    if legend:
+        key, key_h = swatch_legend(
+            [(k, v, "") for k, v in ROLE_OUTCOME_COLOURS.items()],
+            plot_w + pad_l, 0, columns=1,
+        )
+    width = pad_l + plot_w + pad_r
+    height = pad_t + body_h + pad_b + key_h
+
+    raw = max(lost + wrong for _, rows in groups for _, lost, wrong, _ in rows)
+    step = 0.05
+    high = step * math.ceil(raw * 1.06 / step)
+
+    def x(value: float) -> float:
+        return pad_l + value / high * plot_w
+
+    out = [
+        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+        f'role="img" aria-label="what became of each turn, by model and role">'
+    ]
+    axis_top, axis_bottom = pad_t, pad_t + body_h - group_gap
+    for tick in range(0, int(round(high / step)) + 1):
+        value = tick * step
+        gx = round(x(value), 1)
+        out.append(
+            f'<line x1="{gx}" y1="{axis_top}" x2="{gx}" y2="{axis_bottom}" '
+            f'stroke="{GRIDLINE}" stroke-width="1"/>'
+            f'<text x="{gx}" y="{axis_bottom + 16}" text-anchor="middle" '
+            f'class="tick">{value * 100:.0f}%</text>'
+        )
+
+    y = pad_t
+    for lines, rows in groups:
+        # The model is named once, left-aligned across the label column, so
+        # the eye reads model first and role second.
+        for index, text in enumerate(lines):
+            out.append(
+                f'<text x="0" y="{y + 11 + index * line_h:.1f}" class="cat" '
+                f'font-weight="600">{escape(text)}</text>'
+            )
+        y += len(lines) * line_h + (head_h - line_h)
+
+        first_centre = y + row_h / 2
+        for role, lost, wrong, turns in rows:
+            centre = y + row_h / 2
+            out.append(
+                f'<text x="{pad_l - 24}" y="{centre + 4:.1f}" text-anchor="end" '
+                f'class="cat">{escape(role)}</text>'
+                f'<line x1="{pad_l - 18}" y1="{centre:.1f}" x2="{pad_l - 6}" '
+                f'y2="{centre:.1f}" stroke="{AXIS}" stroke-width="1"/>'
+            )
+            left = 0.0
+            for category, value in (
+                ("words never transcribed", lost),
+                ("credited to the wrong person", wrong),
+            ):
+                if value <= 0:
+                    continue
+                out.append(
+                    f'<rect x="{x(left):.1f}" y="{y + 3:.1f}" '
+                    f'width="{max(x(left + value) - x(left), 0.6):.1f}" '
+                    f'height="{row_h - 6}" fill="{ROLE_OUTCOME_COLOURS[category]}"/>'
+                )
+                left += value
+            out.append(
+                f'<text x="{pad_l + plot_w + 8}" y="{centre + 4:.1f}" class="val">'
+                f'{(lost + wrong) * 100:.1f}% of {turns:,}</text>'
+            )
+            y += row_h + row_gap
+
+        # The rule that makes the grouping visible without a box or a shade.
+        out.append(
+            f'<line x1="{pad_l - 18}" y1="{first_centre:.1f}" x2="{pad_l - 18}" '
+            f'y2="{y - row_h / 2 - row_gap:.1f}" stroke="{AXIS}" stroke-width="1"/>'
+        )
+        y += group_gap
+
+    out.append(
+        f'<text x="{pad_l + plot_w / 2:.1f}" y="{axis_bottom + 30}" '
+        f'text-anchor="middle" class="tick">share of that role\'s turns</text>'
     )
+    if key:
+        out.append(f'<g transform="translate(2,{pad_t + body_h + pad_b - 4})">{key}</g>')
+    out.append("</svg>")
+    return "".join(out), width, height
+
+
+
+
+def pii_open_marked_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
+    """Every marked item left open, not only the ones whose survival is checkable.
+
+    The leak figure counts the 306 items whose original wording the typist left
+    intact, because those are the only ones a search can verify. That
+    denominator flatters every system: it drops the 570 items scrubbed to
+    {REDACTED} as typed, where the wording cannot be searched for but the
+    system either put a placeholder at that spot or did not. Over all 876, the
+    best system leaves 170 open rather than 15, and most of the difference is
+    the unverifiable category -- not proof of a leak, but not evidence of
+    safety either, and the reason this figure exists next to the other one.
+    """
+    if not data:
+        return "", 0, 0
+    aggregate = data.get("aggregate", {})
+    rows = []
+    for name, parts, colour, _ in SYSTEMS:
+        stats = registry.entry_of(aggregate, name)
+        if stats and stats.get("left_open") is not None:
+            rows.append((name, parts, colour, stats))
+    if not rows:
+        return "", 0, 0
+
+    order = [k for k in OPEN_MARKED_COLOURS
+             if any(k in s["kinds"] for _, _, _, s in rows)]
+    line_h = 14
+    max_lines = max(len(_label_lines(p)) for _, p, _, _ in rows)
+    row_h = max(26, max_lines * line_h + 6)
+    gap, pad_l, pad_r, pad_t, pad_b = 16, 250, 175, 22, 30
+    plot_w = 300
+    height = pad_t + len(rows) * (row_h + gap) + pad_b
+    width = pad_l + plot_w + pad_r
+    marked = max(s["marked"] for _, _, _, s in rows)
+    peak = max(max(s["left_open"] for _, _, _, s in rows), 1)
+
+    out = [
+        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+        f'role="img" aria-label="marked items left open by system">'
+    ]
+    for fraction in (0.5, 1.0):
+        gx = pad_l + plot_w * fraction
+        out.append(
+            f'<line x1="{gx:.1f}" y1="{pad_t - 4}" x2="{gx:.1f}" y2="{height - pad_b}" '
+            f'stroke="{GRIDLINE}" stroke-width="1"/>'
+            f'<text x="{gx:.1f}" y="{height - pad_b + 14}" text-anchor="middle" '
+            f'class="tick">{peak * fraction:.0f}</text>'
+        )
+
+    for index, (_name, parts, _system_colour, stats) in enumerate(rows):
+        y = pad_t + index * (row_h + gap)
+        lines = _label_lines(parts)
+        first = y + (row_h - len(lines) * line_h) / 2 + line_h - 4
+        for line_index, text in enumerate(lines):
+            out.append(
+                f'<text x="{pad_l - 14}" y="{first + line_index * line_h:.1f}" '
+                f'text-anchor="end" class="cat">{escape(text)}</text>'
+            )
+        x = pad_l
+        cy = y + (row_h - 14) / 2
+        for kind in order:
+            count = stats["kinds"].get(kind, 0)
+            if not count:
+                continue
+            w = plot_w * count / peak
+            out.append(
+                f'<rect x="{x:.1f}" y="{cy:.1f}" width="{max(w, 0.6):.1f}" height="14" '
+                f'fill="{OPEN_MARKED_COLOURS[kind]}"/>'
+            )
+            x += w
+        out.append(
+            f'<text x="{x + 8:.1f}" y="{cy + 11:.1f}" class="val">'
+            f'{stats["left_open"]} of {stats["marked"]} marked '
+            f'({stats["left_open"] / stats["marked"] * 100:.1f}%)</text>'
+        )
+
+    tail = 0
+    if legend:
+        block, tail = swatch_legend(
+            [(k, OPEN_MARKED_COLOURS[k], "") for k in order],
+            width - pad_l, height - pad_b + 26, columns=2,
+        )
+        out.append(f'<g transform="translate({pad_l - 34},0)">{block}</g>')
+        height += tail + 12
+        out[0] = (
+            f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+            f'role="img" aria-label="marked items left open by system">'
+        )
+    out.append("</svg>")
+    return "".join(out), width, height

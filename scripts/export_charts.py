@@ -55,6 +55,7 @@ from plot_results import (  # noqa: E402
     pii_f1_svg,
     pii_leak_svg,
     pii_identifier_svg,
+    pii_open_marked_svg,
     pii_overredaction_svg,
     leak_type_svg,
     redaction_svg,
@@ -340,6 +341,29 @@ def validation_figures(validation: dict | None, kinds: dict | None,
     return out
 
 
+def open_marked_figure(data: dict | None, clean: bool = False):
+    """The leak question asked over every marked item, not only checkable ones."""
+    svg, w, h = pii_open_marked_svg(data, legend=True)
+    if not svg:
+        return []
+    return [("pii-marked-left-open", *titled(
+        "Marked identifying material the system left in place",
+        "lower is better; all 876 marked items, not only the checkable ones",
+        svg, w, h,
+        "The other leak chart counts the 306 items whose original wording the "
+        "typists left intact, because those are the only ones a search can "
+        "verify. This one counts all 876. The red segment is the same confirmed "
+        "leaks; the orange is the larger group where the typist deleted the "
+        "wording as they typed, so nothing can be searched for and only a person "
+        "reading the system's own words at that point can say whether an "
+        "identifier is sitting there. Grey is where nothing was blanked and the "
+        "marked wording is not in the transcript either, which usually means the "
+        "recogniser heard it differently or missed the speech. Purple is the "
+        "worst case: blanked at this mention, still readable elsewhere.",
+        clean=clean,
+    ))]
+
+
 def tail_figures(jiwer: dict | None, lost: dict | None,
                  clean: bool = False) -> list[tuple[str, str, int, int]]:
     """Where the aggregate accuracy win comes from, and what a lost turn costs.
@@ -435,15 +459,17 @@ def tail_figures(jiwer: dict | None, lost: dict | None,
     if svg:
         out.append(("turn-outcomes-by-role", *titled(
             "What became of each turn, by who was speaking",
-            "lower is better; two rows per system",
+            "lower is better; the two roles sit under the model that produced them",
             svg, w, h,
-            "The same three failures split between the interviewer and the person "
-            "being interviewed. The two are not interchangeable downstream: the "
-            "questions are the context anything reading this transcript later "
-            "depends on, and the answers are the data. Our pipeline credits the "
-            "participant's words to the wrong speaker noticeably more often than "
-            "the interviewer's, which is the worse way round; the pyannote 3.1 "
-            "pipeline is close to even between the two.",
+            "For every turn the typist recorded: were that turn's words anywhere in "
+            "what the system transcribed around it, and if they were, did they end up "
+            "under the right speaker. The two counts never overlap, so the bar is the "
+            "total that went wrong. Missing words dominate everywhere -- misfiling is "
+            "the smaller failure, between 3% and 10% of turns. Reading within a model "
+            "rather than across: Chirp-3 loses more of the interviewer's turns than "
+            "the participant's, while both CrisperWhisper pipelines do the opposite, "
+            "and ours loses nearly a third of participant turns. The participant's "
+            "answers are the data, so that is the worse way round.",
             clean=clean,
         )))
 
@@ -562,6 +588,10 @@ def main() -> int:
         help="redaction results for a validation run; adds the three PII figures",
     )
     parser.add_argument(
+        "--open-marked", default=None,
+        help="open_marked.json; adds the all-876 version of the leak figure",
+    )
+    parser.add_argument(
         "--leak-kinds", default=None,
         help="leak_kinds.json from classify_leaks.py; splits the leak bars by shape",
     )
@@ -665,10 +695,14 @@ def main() -> int:
 
     validation = load_results(args.validation)
     kinds = json.loads(Path(args.leak_kinds).read_text()) if args.leak_kinds else None
+    open_marked = (
+        json.loads(Path(args.open_marked).read_text()) if args.open_marked else None
+    )
     for name, svg, width, height in (
         extra_figures(data, mono, stereo, redaction, taxonomy, clean=args.clean,
                       leaks=leaks, exposure=exposure)
         + validation_figures(validation, kinds, clean=args.clean)
+        + open_marked_figure(open_marked, clean=args.clean)
         + tail_figures(jiwer_data, lost, clean=args.clean)
     ):
         emit(name, name.replace('-', ' '), svg, width, height)
