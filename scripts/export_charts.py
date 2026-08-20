@@ -354,22 +354,20 @@ def tail_figures(jiwer: dict | None, lost: dict | None,
     svg, w, h = lost_turn_svg(lost, legend=True)
     if svg:
         out.append(("lost-turns", *titled(
-            "Turns that never made it into the transcript",
-            "lower is better; nothing transcribed within half a second of the turn",
+            "Turns whose words never made it into the transcript",
+            "lower is better; a turn is lost when none of its words were transcribed",
             svg, w, h,
-            "A turn is lost when the system produced no word within half a second "
-            "of the time the transcript says someone was speaking. The half second "
-            "matters: the typists marked turn times to about a third of a second, "
-            "and a stricter test counts an approximate boundary as a missing "
-            "sentence. Chirp-3 loses three to four times as many turns as either "
-            "CrisperWhisper pipeline, and loses them at the same rate whatever the "
-            "turn length -- when Chirp-3 loses a turn the nearest transcribed word "
-            "is a median of 44 seconds away, so it is dropping whole stretches of "
-            "the interview rather than individual sentences. The CrisperWhisper "
-            "pipelines lose short turns about twice as often as long ones. Word "
-            "error rate barely notices any of this: a lost four-word question is "
-            "four missing words out of five thousand, but a reader sees a question "
-            "gone from the conversation.",
+            "For every turn the typist recorded, are that turn's words anywhere in "
+            "what the system transcribed around it. On long turns our pipeline is the "
+            "best of the four. On turns under two seconds it is much the worst, "
+            "losing short answers -- no, yeah, okay, yes -- at about twice Chirp-3's "
+            "rate. Those are ordinary words, not a spelling mismatch: only the "
+            "mm-hmm cases, about a sixth of them, could be notation. Widening the "
+            "comparison window from half a second to three seconds moves every bar "
+            "by two to four points and changes no ordering, so this is speech that "
+            "was not transcribed rather than speech that was mistimed. Word error "
+            "rate barely registers any of it, because a lost one-word answer is one "
+            "missing word among thousands.",
             clean=clean,
         )))
     svg, w, h = turn_outcome_svg(lost, legend=True)

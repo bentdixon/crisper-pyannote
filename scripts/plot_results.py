@@ -2870,21 +2870,21 @@ def ecdf_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
 
 
 def lost_turn_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
-    """Turns nothing was transcribed for, grouped by how long the turn ran.
+    """Turns whose own words are absent, grouped by how long the turn ran.
 
-    A turn counts as lost only when no word was produced within half a second
-    of it. The strict inside-the-span test measured the transcripts' own
-    annotation granularity: 68% of the turns our pipeline appeared to lose have
-    a word within a quarter of a second of the span, against 22% of Chirp-3's,
-    whose lost turns sit a median of 44 seconds from the nearest word. Those
-    are two different failures -- a boundary drawn approximately, and a stretch
-    of speech that was never transcribed -- and the strict test conflated them.
+    A turn counts as lost when none of the words the transcript records for it
+    appear in what the system transcribed around it. Two earlier versions of
+    this measure asked the wrong question and both flattered our pipeline. The
+    first asked whether any word fell strictly inside the turn's marked span,
+    which measured the transcripts' third-of-a-second annotation granularity.
+    The second allowed half a second of slack -- but human turns tile the
+    timeline, so the neighbouring speaker's words satisfy a presence test
+    almost everywhere, and only a system dropping a whole region ever failed
+    it. Comparing the turn's own words is the test that survives both.
 
-    Grouping by turn length rather than by the gap to the previous turn,
-    because that is where the systems actually differ in shape: the two
-    CrisperWhisper pipelines lose short turns about twice as often as long
-    ones, while Chirp-3's loss is flat across every length, which is what
-    losing whole regions rather than individual turns looks like.
+    Widening the comparison window from half a second to three seconds moves
+    every bar by two to four points and changes no ordering, so what this shows
+    is speech that was not transcribed, not speech that was mistimed.
     """
     if not data:
         return "", 0, 0
@@ -2892,7 +2892,9 @@ def lost_turn_svg(data: dict | None, legend: bool = False) -> tuple[str, int, in
     rows = []
     for name, parts, colour, _ in SYSTEMS:
         stats = registry.entry_of(aggregate, name)
-        if stats and stats.get("by_length_bucket"):
+        if stats and (stats.get("by_length_bucket") or {}).get(
+            "<1s", {}
+        ).get("content_lost_rate") is not None:
             rows.append((name, parts, colour, stats))
     if not rows:
         return "", 0, 0
@@ -2917,7 +2919,7 @@ def lost_turn_svg(data: dict | None, legend: bool = False) -> tuple[str, int, in
     # groups of four bars; sizing to the bars alone clips the longest name.
     width = max(pad_l + plot_w + pad_r, 780)
     high = max(
-        stats["by_length_bucket"][b]["lost_rate"]
+        stats["by_length_bucket"][b]["content_lost_rate"]
         for _, _, _, stats in rows for b in buckets
     ) * 1.15
 
@@ -2941,7 +2943,7 @@ def lost_turn_svg(data: dict | None, legend: bool = False) -> tuple[str, int, in
     for index, bucket_key in enumerate(buckets):
         x0 = pad_l + index * group_w
         for order, (_name, _parts, colour, stats) in enumerate(rows):
-            value = stats["by_length_bucket"][bucket_key]["lost_rate"]
+            value = stats["by_length_bucket"][bucket_key]["content_lost_rate"]
             bx = x0 + bar_gap + order * (bar_w + bar_gap)
             out.append(
                 f'<rect x="{bx:.1f}" y="{y(value):.1f}" width="{bar_w:.1f}" '
@@ -2954,7 +2956,8 @@ def lost_turn_svg(data: dict | None, legend: bool = False) -> tuple[str, int, in
             f'text-anchor="middle" class="cat">{escape(labels[bucket_key])}</text>'
             f'<text x="{x0 + group_w / 2:.1f}" y="{pad_t + plot_h + 32}" '
             f'text-anchor="middle" class="tick">'
-            f'{rows[0][3]["by_length_bucket"][bucket_key]["turns"]} turns</text>'
+            f'{rows[0][3]["by_length_bucket"][bucket_key]["content_scored"]} '
+            f'turns</text>'
         )
     out.append(
         f'<line x1="{pad_l}" y1="{pad_t + plot_h}" x2="{pad_l + plot_w}" '
@@ -2969,7 +2972,7 @@ def lost_turn_svg(data: dict | None, legend: bool = False) -> tuple[str, int, in
                 f'<rect x="{pad_l}" y="{ly - 8}" width="10" height="10" rx="2" '
                 f'fill="{colour}"/><text x="{pad_l + 16}" y="{ly}" class="leg">'
                 f'{escape(" + ".join(parts))} -- '
-                f'{stats["lost_rate"] * 100:.1f}% of all turns lost</text>'
+                f'{stats["content_lost_rate"] * 100:.1f}% of all turns</text>'
             )
     out.append("</svg>")
     return "".join(out), width, height
