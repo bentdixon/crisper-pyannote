@@ -848,6 +848,17 @@ including the 10.3 / 12.9 / 16.8 / 64.2 this table used to carry):
             4.9 / 5.9 / 6.2 / 6.5 / 10.1 / 47.1 and stay in the results file
     names   of 122 distinct identifiers, how many read anywhere in the file
 
+`pii-over-redaction` answers the other half of the question -- not what a
+system misses but what it blanks that nobody marked. Against the 876 marked
+items: chirp3 places 1996 placeholders (2.3x), the Gemma arms 1449-1579
+(1.7-1.8x), verbatimize 264 (0.3x). Both segments of that figure are counted on
+the *prediction* side (`predicted_spans - false_positives`, then
+`false_positives`); adding `true_positives` to `false_positives` overshoots,
+because one placeholder can cover two marked items -- 2031 against chirp3's
+real 1996. The overhang is an upper bound on over-blanking, since only 141 of
+269 transcripts carry any marking and an unmarked real identifier lands in the
+extra segment.
+
 - **Gemma beats Chirp-3's native redaction on every measure** while redacting
   *less* (1449 spans vs 1996): 10-16 points more sensitive, 16 more precise,
   and half the leak rate.
