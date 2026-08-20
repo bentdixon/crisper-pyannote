@@ -507,6 +507,7 @@ def make_file_adapter(suffix: str):
 ADAPTERS = {
     "chirp3": (load_chirp, None),
     "ours": (make_run_adapter("transcript.json"), "transcript.json"),
+    "ours_diar": (make_run_adapter("transcript.json"), "transcript.json"),
     "verbatimize": (make_run_adapter("transcript.json"), "transcript.json"),
     "baseline": (make_file_adapter("_words.json"), "_words.json"),
     "baseline_llm": (make_file_adapter("_words_corrected.json"), "_words_corrected.json"),

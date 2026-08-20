@@ -38,6 +38,12 @@ SYSTEMS: list[tuple[str, list[str], str, str]] = [
         "verbatim ASR with community-1 diarization",
     ),
     (
+        "ours_diar",
+        ["CrisperWhisper 2.0 ASR", "pyannote community-1 (diarize-first windows)"],
+        "#12a594",
+        "community-1 segments used as the ASR windows instead of silero VAD",
+    ),
+    (
         "ours_llm",
         ["CrisperWhisper 2.0 ASR", "pyannote community-1", "Qwen2.5-7B review"],
         "#7fb0e8",
