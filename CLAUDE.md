@@ -863,6 +863,45 @@ including the 10.3 / 12.9 / 16.8 / 64.2 this table used to carry):
   that caught it. Gemma flagging "Boylston" and "MBTA" (city-identifying,
   unmarked by the transcriber) is the canonical case.
 
+### Near-miss spellings count as leaks (2026-08-20)
+
+An exact search for the marked wording misses a name the recogniser spelled
+differently, and that name still identifies the person, so the exact leak
+counts flatter every system. `redaction.best_similarity` records each marked
+term's closest character match (rapidfuzz, falling back to difflib) among token
+windows of its own length +/-1 inside the projected region, and
+`FUZZY_THRESHOLD` is applied on top -- so changing the cut-off never needs
+another scoring run.
+
+    system                          leak (exact)   leak (near-miss)
+    turn rewrite + possessive               4.9%               4.9%
+    chunk + possessive                      5.9%               7.2%
+    pyannote 3.1 + Gemma                    6.5%               7.8%
+    chirp3 (native)                        10.1%              12.4%
+    verbatimize                            47.1%              53.9%
+
+Calibration, from `outputs/private/leaks_fuzzy.csv`: the similarity
+distribution of the not-exactly-leaked terms is bimodal, with **nothing at all
+between 0.80 and 0.85**, so 36 extra leaks is the answer anywhere in that band
+and the threshold is not knife-edge. At 0.95 only 1 survives; at 0.90, 29.
+
+The 36 hits reduce to 7 distinct pairs and **all 7 are genuine**: a hyphenation
+difference, two name spellings, a place-name spelling, a possessive stripped
+from a name, a partly-heard neighbourhood, and a one-letter place-name
+substitution. No false positive of the "no" / "now" kind, because
+`MIN_FUZZY_CHARS` (5) keeps short terms on the exact test -- at 0.85 "no"
+reaches "now" and "so".
+
+Two of the seven are hyphenation and possessive differences, which a
+normalization rule would catch deterministically and is the better fix for
+those classes. The standing limitation is the other direction: short names
+(three or four letters) cannot be fuzzy-matched at all without false hits, and
+a recogniser rendering that shares few letters with the marked form
+(similarity 0.61 in the synthetic check) is missed by both tests.
+
+Ranking is unchanged, and turn-rewrite mode gains nothing -- it was already
+catching those mentions.
+
 ### Turn-rewrite mode, and why it did not replace chunking (2026-08-13)
 
 `redact_llm.py --mode turn` is a second protocol: one speaker turn per call, the
