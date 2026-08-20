@@ -2995,6 +2995,134 @@ def ecdf_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
     return "".join(out), width, height
 
 
+def _spread_series(data: dict) -> list[tuple[str, list[str], str, list[tuple[str, float]]]]:
+    """Per-visit error rates per system, LLM-review arms dropped.
+
+    Those arms are never better on any visit and their distributions sit on top
+    of the arms they review, so drawing them hides the comparison this figure
+    exists to make.
+    """
+    series = []
+    for name, parts, colour, _ in SYSTEMS:
+        if name.endswith("_llm"):
+            continue
+        values = [
+            (visit, float(v["wer"]))
+            for visit, entry in (data.get("per_visit") or {}).items()
+            if (v := registry.entry_of(entry, name)) and v.get("wer") is not None
+        ]
+        if values:
+            series.append((name, parts, colour, sorted(values, key=lambda r: r[1])))
+    return series
+
+
+def spread_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
+    """Every interview as one dot, so consistency is visible next to accuracy.
+
+    The averages put these systems within three points of each other and the
+    medians within one, which reads as "much the same". They are not much the
+    same: Chirp-3's spread of outcomes is roughly twice as wide by standard
+    deviation and three times as wide by the middle-half range, because it fails
+    outright on a handful of interviews rather than degrading gently. A reader
+    choosing a system for unattended use is choosing against that tail, and no
+    single average can show it.
+
+    The box is the middle half of the interviews and the tick inside it is the
+    median; dots past the box are drawn individually because they are the whole
+    point. Dots are jittered vertically only -- horizontal position is the error
+    rate and is never perturbed.
+    """
+    if not data:
+        return "", 0, 0
+    import statistics
+
+    series = _spread_series(data)
+    if not series:
+        return "", 0, 0
+
+    def quantile(values: list[float], share: float) -> float:
+        position = (len(values) - 1) * share
+        low = int(position)
+        high = min(low + 1, len(values) - 1)
+        return values[low] + (values[high] - values[low]) * (position - low)
+
+    line_h = 14
+    max_lines = max(len(_label_lines(p)) for _, p, _, _ in series)
+    row_h = max(56, max_lines * line_h + 18)
+    gap, pad_l, pad_r, pad_t, pad_b = 14, 250, 200, 26, 46
+    plot_w = 560
+    height = pad_t + len(series) * (row_h + gap) + pad_b + (30 if legend else 0)
+    width = pad_l + plot_w + pad_r
+    high = 1.0
+
+    def x(value: float) -> float:
+        return pad_l + min(value, high) / high * plot_w
+
+    out = [
+        f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" '
+        f'role="img" aria-label="spread of per-interview error rates by system">'
+    ]
+    body = pad_t + len(series) * (row_h + gap) - gap
+    for step in range(0, 11, 2):
+        gx = round(x(step / 10), 1)
+        out.append(
+            f'<line x1="{gx}" y1="{pad_t - 6}" x2="{gx}" y2="{body + 6}" '
+            f'stroke="{GRIDLINE}" stroke-width="1"/>'
+            f'<text x="{gx}" y="{body + 22}" text-anchor="middle" class="tick">'
+            f'{step * 10}%</text>'
+        )
+    out.append(
+        f'<text x="{pad_l + plot_w / 2}" y="{body + 38}" text-anchor="middle" '
+        f'class="tick">word error rate on one interview</text>'
+    )
+
+    for index, (_name, parts, colour, rows) in enumerate(series):
+        y = pad_t + index * (row_h + gap)
+        values = [v for _, v in rows]
+        lines = _label_lines(parts)
+        first = y + (row_h - len(lines) * line_h) / 2 + line_h - 4
+        for line_index, text in enumerate(lines):
+            out.append(
+                f'<text x="{pad_l - 14}" y="{first + line_index * line_h:.1f}" '
+                f'text-anchor="end" class="cat">{escape(text)}</text>'
+            )
+        mid = y + row_h / 2
+        lo, med, hi = (quantile(values, s) for s in (0.25, 0.5, 0.75))
+        whisker_lo, whisker_hi = quantile(values, 0.05), quantile(values, 0.95)
+        # Whiskers first, then the box over them, then the dots over both.
+        out.append(
+            f'<line x1="{x(whisker_lo):.1f}" y1="{mid:.1f}" x2="{x(whisker_hi):.1f}" '
+            f'y2="{mid:.1f}" stroke="{colour}" stroke-width="1.5" opacity="0.55"/>'
+            f'<rect x="{x(lo):.1f}" y="{mid - 11:.1f}" '
+            f'width="{max(x(hi) - x(lo), 1.2):.1f}" height="22" rx="2" '
+            f'fill="{colour}" opacity="0.20"/>'
+            f'<line x1="{x(med):.1f}" y1="{mid - 12:.1f}" x2="{x(med):.1f}" '
+            f'y2="{mid + 12:.1f}" stroke="{colour}" stroke-width="2.5"/>'
+        )
+        # Deterministic jitter: dot order is the sorted rank, so the pattern is
+        # stable between renders and two systems can be compared by eye.
+        for rank, value in enumerate(values):
+            offset = ((rank * 7) % 13 - 6) / 6 * 8
+            out.append(
+                f'<circle cx="{x(value):.1f}" cy="{mid + offset:.1f}" r="2" '
+                f'fill="{colour}" opacity="0.42"/>'
+            )
+        out.append(
+            f'<text x="{pad_l + plot_w + 12}" y="{mid - 3:.1f}" class="val">'
+            f'middle half spans {(hi - lo) * 100:.1f} points</text>'
+            f'<text x="{pad_l + plot_w + 12}" y="{mid + 11:.1f}" class="leg">'
+            f'{sum(1 for v in values if v > 0.5)} interviews over 50%</text>'
+        )
+    if legend:
+        out.append(
+            f'<text x="{pad_l}" y="{height - 10}" class="leg">'
+            f'one dot per interview; the box is the middle half, the upright tick '
+            f'the median, the thin line the 5th to 95th percentile</text>'
+        )
+    out.append("</svg>")
+    return "".join(out), width, height
+
+
 def lost_turn_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
     """Turns whose own words are absent, grouped by how long the turn ran.
 
@@ -3212,33 +3340,32 @@ def _stacked_rows_svg(rows, title: str, axis_label: str, colours: dict,
 def turn_outcome_svg(data: dict | None, legend: bool = False) -> tuple[str, int, int]:
     """Every turn in the transcripts, by what became of it.
 
-    The three ways a turn can fail, on one scale, so their relative size is
-    visible: losing a turn outright is the rarest of them, and getting the
-    words right but the speaker wrong is by far the largest. Reporting the
-    lost-turn rate on its own invites the opposite impression.
+    Two mutually exclusive outcomes, both on the content measure: a turn
+    either has none of its words in the transcript, or has them credited to
+    the wrong speaker. The first version of this figure decomposed the
+    superseded presence measure into three parts, two of which were artefacts
+    -- human turns tile the timeline, so a presence test is satisfied by the
+    neighbouring speaker, and the residue was charged to attribution. That is
+    how it came to show a quarter of all turns misattributed.
 
-    The middle segment exists because it was the whole reason the first version
-    of this measure was wrong: those turns were transcribed, with a word within
-    half a second, and only counted as missing because the boundary in the
-    human transcript is approximate to about a third of a second.
+    Missing words dominate misfiled ones for every system here, which is the
+    opposite of what the earlier figure implied.
     """
     rows = []
     for _name, parts, _colour, stats in _lost_turn_rows(data):
-        lost = stats["lost_rate"]
-        boundary = max(stats["lost_entirely_rate"] - lost, 0.0)
-        wrong = max(stats["lost_to_speaker_rate"] - stats["lost_entirely_rate"], 0.0)
+        if stats.get("misattributed_rate") is None:
+            continue
+        lost = stats["content_lost_rate"]
+        wrong = stats["misattributed_rate"]
         rows.append((
             _label_lines(parts, limit=36),
-            [
-                ("never transcribed", lost),
-                ("just outside the marked boundary", boundary),
-                ("credited to the wrong person", wrong),
-            ],
-            f"{(lost + boundary + wrong) * 100:.1f}% of turns",
+            [("words never transcribed", lost),
+             ("credited to the wrong person", wrong)],
+            f"{(lost + wrong) * 100:.1f}% of {stats['content_scored']} turns",
         ))
     return _stacked_rows_svg(
-        rows, "what became of each turn", "share of all 68,950 turns",
-        TURN_OUTCOME_COLOURS, None, legend,
+        rows, "what became of each turn", "share of all scored turns",
+        ROLE_OUTCOME_COLOURS, None, legend,
     )
 
 

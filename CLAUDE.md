@@ -727,6 +727,42 @@ Two visits run off the head-to-head scale (worst -67 points), including the
 known near-silent GA06750 file; they are drawn as wedges at the edge and
 counted in the caption rather than allowed to set the axis.
 
+### Consistency, not accuracy, is the real gap (2026-08-20)
+
+`scripts/worst_visits.py` ranks the 269 interviews by per-visit jiwer WER and
+names the dominant error term on each. `spread_svg` in `plot_results.py` draws
+the distributions (`figures/wer-spread.png`, via `export_charts.py --jiwer`).
+
+    system              median    mean      sd     IQR     p90    >50% WER
+    chirp3               0.127   0.175   0.149   0.160   0.353      10
+    verbatimize          0.132   0.188   0.147   0.161   0.371       8
+    ours (c1)            0.122   0.143   0.079   0.049   0.226       2
+    baseline (3.1)       0.136   0.155   0.081   0.059   0.244       2
+
+The medians are within 1.4 points and the means within 4.5, which reads as
+"much the same". The **middle half of Chirp-3's interviews spans 16.0 points
+against our 4.9**, and its standard deviation is twice ours. Chirp-3 fails
+outright on ten interviews where we fail on two -- and both of ours are known
+bad recordings, not transcription failures.
+
+The failure modes differ in kind, not only in frequency. Every one of our eight
+worst interviews is **deletion-dominated** -- speech never transcribed, the same
+defect the lost-turns work found in silero windowing. Chirp-3's worst are three
+distinct failures:
+
+    SD21776/day0010   93.9%   substitutions 84%   right length, wrong words
+    BI11459/day0154   90.0%   substitutions 69%   the degenerate-offsets file
+    GA04102/day0083   87.2%   insertions    71%   1.67x reference length
+    YA03473/day0209   68.3%   deletions     67%   transcribed a third of it
+
+Our two: GA06750/day0088 (99.4%, the near-silent/corrupt file, 25 words for
+2037 s) and CM04902/day0060 (56.0%, deletions 54%, where Chirp-3 manages 10.4%).
+
+This is the honest headline for unattended use, and it is compatible with the
+2026-08-19 finding that chirp3 wins 151 of 269 interviews: chirp3 is better on
+the typical interview and much less predictable across the corpus. Quote the
+spread alongside the median, never the mean alone.
+
 ### Lost turns, and two wrong measures before the right one (2026-08-20)
 
 `scripts/lost_turns.py`. Measuring this took three attempts and the first two

@@ -43,6 +43,7 @@ from plot_results import (  # noqa: E402
     merge_jiwer,
     ecdf_svg,
     headtohead_svg,
+    spread_svg,
     lost_turn_svg,
     lost_by_role_svg,
     lost_distance_svg,
@@ -388,6 +389,24 @@ def tail_figures(jiwer: dict | None, lost: dict | None,
             clean=clean,
         )))
 
+    svg, w, h = spread_svg(jiwer, legend=True)
+    if svg:
+        out.append(("wer-spread", *titled(
+            "How consistent each system is across the 269 interviews",
+            "one dot per interview; a wider spread means less predictable output",
+            svg, w, h,
+            "The averages put these systems within three points of each other, "
+            "which reads as much the same. They are not. Chirp-3's dots reach far "
+            "to the right: on ten interviews it gets more than half the words "
+            "wrong, where our pipeline does that on two, and both of ours are "
+            "known bad recordings rather than transcription failures. The middle "
+            "half of Chirp-3's interviews spans sixteen points against our five. "
+            "For unattended use the width of this spread matters more than the "
+            "average, because it is how often a transcript needs a human to "
+            "notice something went wrong.",
+            clean=clean,
+        )))
+
     svg, w, h = ecdf_svg(jiwer, legend=True)
     if svg:
         out.append(("wer-distribution", *titled(
@@ -428,14 +447,15 @@ def tail_figures(jiwer: dict | None, lost: dict | None,
             "What became of each turn",
             "lower is better; the bar is everything that went wrong",
             svg, w, h,
-            "Every turn in every human transcript, by what the system did with it. "
-            "Losing a turn outright is the rarest of the three failures. The most "
-            "common by a wide margin is getting the words but crediting them to the "
-            "wrong person -- between an eighth and a quarter of all turns. The "
-            "middle band is turns whose words were transcribed within half a second "
-            "of the marked time but not exactly inside it, which is the typists' "
-            "approximate boundary rather than any kind of error; it is shown "
-            "because a stricter reading of this measure counted those as missing.",
+            "Every turn the typists recorded, by what the system did with it. Two "
+            "outcomes that cannot both apply: the turn's words are nowhere in the "
+            "transcript, or they are there under the wrong speaker. Missing words "
+            "dominate misfiled ones for every system. Our pipeline misfiles the "
+            "least, 5.1% against Chirp-3's 8.7%, and loses the most, 25.0% against "
+            "17.6% -- the loss being short answers it never transcribed. An earlier "
+            "version of this figure split the bar three ways on a measure that asked "
+            "only whether anything was transcribed nearby, which the neighbouring "
+            "speaker satisfies, and so overstated misattribution several times over.",
             clean=clean,
         )))
 
