@@ -70,7 +70,10 @@ def main(argv: list[str] | None = None) -> int:
 
     counts: dict[str, Counter] = defaultdict(Counter)
     for row in csv.DictReader(open(args.leaks_csv)):
-        if row.get("leaked") != "1":
+        # Near-miss is the reported measure, so the shapes must be counted on
+        # the same rows the leak figure counts. Files written before the
+        # similarity scores existed have no such column and fall back.
+        if row.get("leaked_fuzzy", row.get("leaked")) != "1":
             continue
         counts[row["system"]][kind(row.get("identifier", ""))] += 1
 

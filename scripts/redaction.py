@@ -336,9 +336,20 @@ def score_visit(human: Path | list[dict], words: list[dict]) -> dict:
     # One entry per distinct identifier, so a name marked seventeen times
     # counts once toward "can this person still be identified".
     identifiers: dict[str, bool] = {}
+    identifiers_fuzzy: dict[str, bool] = {}
     for detail in testable_spans:
         key = " ".join(normalize_token(t) for t in detail["surface"].split())
         identifiers[key] = identifiers.get(key, False) or detail["readable_somewhere"]
+        # Near-miss version: the person is identifiable if the exact wording
+        # survives anywhere, or if any one of their mentions was left in a
+        # spelling close enough to read. The second half is positional by
+        # construction -- a fuzzy sweep of the whole transcript would match
+        # some unrelated word in every long interview.
+        identifiers_fuzzy[key] = (
+            identifiers_fuzzy.get(key, False)
+            or detail["readable_somewhere"]
+            or detail["leaked_fuzzy"]
+        )
 
     categories: dict[str, int] = {}
     for span in predicted:
@@ -364,6 +375,7 @@ def score_visit(human: Path | list[dict], words: list[dict]) -> dict:
         "leaked_fuzzy": leaked_fuzzy,
         "identifiers_testable": len(identifiers),
         "identifiers_readable": sum(1 for v in identifiers.values() if v),
+        "identifiers_readable_fuzzy": sum(1 for v in identifiers_fuzzy.values() if v),
         "categories": categories,
         "spans": details,
     }

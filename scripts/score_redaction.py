@@ -192,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
                 "gold_spans", "predicted_spans", "true_positives",
                 "false_positives", "false_negatives", "leak_testable", "leaked",
                 "leaked_fuzzy", "identifiers_testable", "identifiers_readable",
+                "identifiers_readable_fuzzy",
             ):
                 totals[name][key] += result[key]
             categories[name].update(result["categories"])
@@ -291,6 +292,11 @@ def main(argv: list[str] | None = None) -> int:
                 counter["identifiers_readable"] / counter["identifiers_testable"]
                 if counter["identifiers_testable"] else None
             ),
+            "identifiers_readable_fuzzy": counter["identifiers_readable_fuzzy"],
+            "identifier_leak_rate_fuzzy": (
+                counter["identifiers_readable_fuzzy"] / counter["identifiers_testable"]
+                if counter["identifiers_testable"] else None
+            ),
             "categories": dict(categories[name]),
         }
 
@@ -323,6 +329,10 @@ def main(argv: list[str] | None = None) -> int:
                     if stats["leak_rate_fuzzy"] is not None else "-"
                 )),
                 ("names readable", named),
+                ("names readable (near-miss)", (
+                    f"{stats['identifier_leak_rate_fuzzy'] * 100:.1f}%"
+                    if stats["identifier_leak_rate_fuzzy"] is not None else "-"
+                )),
             ],
         ))
     print()
