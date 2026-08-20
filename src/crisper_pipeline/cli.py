@@ -93,6 +93,18 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     merge_group.add_argument(
+        "--longform", default="windowed",
+        choices=["windowed", "diarization", "continuation"],
+        help=(
+            "how audio over 30 s is split for the ASR. windowed (default): "
+            "silero speech windows, speakers assigned per word afterwards. "
+            "diarization: diarize first and transcribe each segment, taking "
+            "the speaker from the segment, so --diarization-mode and "
+            "--fill-nearest do not apply. continuation: the model's own "
+            "longform strategy, which drops most of the transcript here"
+        ),
+    )
+    merge_group.add_argument(
         "--fill-nearest", action="store_true",
         help=(
             "exclusive mode only: assign the nearest speaker to words with "
@@ -151,11 +163,41 @@ def process_file(
 ) -> Path:
     """Run ASR, diarization, merge, and output writing for one wav file."""
     metadata = build_metadata(audio_path, args, datetime.now())
+    longform = getattr(args, "longform", "windowed")
+
+    if longform == "diarization":
+        # Diarize first, then transcribe each segment: every word arrives with
+        # the speaker of the segment it came from, so no merge step runs and
+        # no word can land in the UNKNOWN bucket. Needs non-overlapping
+        # segments, or shared audio would be transcribed twice.
+        segments = diarization.diarize(
+            dia_pipeline,
+            audio_path,
+            num_speakers=args.num_speakers,
+            min_speakers=args.min_speakers,
+            max_speakers=args.max_speakers,
+            exclusive=True,
+        )
+        transcript = asr.transcribe(
+            asr_model,
+            audio_path,
+            language=args.language,
+            speculative_decoding=not args.no_speculative,
+            longform="diarization",
+            segments=segments,
+        )
+        words = transcript["words"]
+        turns = merge.group_into_turns(words)
+        return outputs.write_outputs(
+            args.output_dir, audio_path, transcript, segments, turns, metadata
+        )
+
     transcript = asr.transcribe(
         asr_model,
         audio_path,
         language=args.language,
         speculative_decoding=not args.no_speculative,
+        longform=longform,
     )
     segments = diarization.diarize(
         dia_pipeline,

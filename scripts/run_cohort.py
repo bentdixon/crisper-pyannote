@@ -64,6 +64,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--language", default="en")
     parser.add_argument("--num-speakers", type=int, default=2)
     parser.add_argument("--fill-nearest", action="store_true")
+    parser.add_argument(
+        "--longform", default="windowed",
+        choices=("windowed", "diarization", "continuation"),
+        help=(
+            "how audio over 30 s is split for the ASR. windowed: silero speech "
+            "windows, then assign speakers by overlap (default). diarization: "
+            "diarize first with community-1 and transcribe each segment, the "
+            "other team's order, which takes the speaker from the segment. "
+            "continuation: the model's own longform strategy, which drops most "
+            "of the transcript on this corpus"
+        ),
+    )
     parser.add_argument("--hf-token", default=None)
     return parser
 
@@ -110,16 +122,34 @@ def main(argv: list[str] | None = None) -> int:
 
         try:
             if args.mode == "ours":
-                transcript = asr.transcribe(
-                    asr_model, audio, language=args.language,
-                    speculative_decoding=not args.no_speculative,
-                )
-                segments = diarization.diarize(
-                    dia_pipeline, audio, num_speakers=args.num_speakers, exclusive=True,
-                )
-                words = merge.assign_speakers(
-                    segments, transcript["words"], fill_nearest=args.fill_nearest
-                )
+                if args.longform == "diarization":
+                    # Diarize first and transcribe segment by segment, the
+                    # other team's order with our community-1 diarizer. Every
+                    # word arrives attributed, so assign_speakers is bypassed
+                    # and the UNKNOWN bucket cannot occur.
+                    segments = diarization.diarize(
+                        dia_pipeline, audio, num_speakers=args.num_speakers,
+                        exclusive=True,
+                    )
+                    transcript = asr.transcribe(
+                        asr_model, audio, language=args.language,
+                        speculative_decoding=not args.no_speculative,
+                        longform="diarization", segments=segments,
+                    )
+                    words = transcript["words"]
+                else:
+                    transcript = asr.transcribe(
+                        asr_model, audio, language=args.language,
+                        speculative_decoding=not args.no_speculative,
+                        longform=args.longform,
+                    )
+                    segments = diarization.diarize(
+                        dia_pipeline, audio, num_speakers=args.num_speakers,
+                        exclusive=True,
+                    )
+                    words = merge.assign_speakers(
+                        segments, transcript["words"], fill_nearest=args.fill_nearest
+                    )
                 payload = {
                     "audio": audio.name,
                     "duration": transcript["duration"],
