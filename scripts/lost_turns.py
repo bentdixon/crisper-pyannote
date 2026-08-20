@@ -248,6 +248,14 @@ def summarize(rows: list[dict]) -> dict:
         scored = [r for r in subset if r["recovered"] is not None]
         content = sum(1 for r in scored if r["content_lost"])
         wide = sum(1 for r in scored if r["content_lost_wide"])
+        # Mutually exclusive with content_lost, so the two can be stacked: the
+        # turn's words are in the transcript, but under the wrong speaker. A
+        # turn can satisfy both raw tests at once -- the neighbour's words
+        # overlap its span while its own are absent -- and counting it twice
+        # would inflate any decomposition built on them.
+        misattributed = sum(
+            1 for r in scored if r["wrong_speaker"] and not r["content_lost"]
+        )
         mostly = sum(1 for r in scored if r["content_mostly_lost"])
         return {
             "turns": total,
@@ -257,6 +265,10 @@ def summarize(rows: list[dict]) -> dict:
             "content_lost_rate": round(content / len(scored), 4) if scored else None,
             "content_lost_wide": wide,
             "content_lost_wide_rate": round(wide / len(scored), 4) if scored else None,
+            "misattributed": misattributed,
+            "misattributed_rate": (
+                round(misattributed / len(scored), 4) if scored else None
+            ),
             "content_mostly_lost_rate": (
                 round(mostly / len(scored), 4) if scored else None
             ),
