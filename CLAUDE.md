@@ -779,6 +779,36 @@ survived.
 Figures: `lost-turns` (by turn length), `turn-outcomes`, `lost-turn-distance`,
 `turn-outcomes-by-role`, via `export_charts.py --lost-turns`.
 
+### By role, on the content measure (2026-08-20)
+
+`turn-outcomes-by-role` is hierarchical -- the model named once with its two
+roles beneath it -- and rebuilt on the content measure. Its two categories are
+counted **exclusively** (`misattributed_rate`: the turn's words are present and
+under the wrong speaker, and it is not content-lost), because the raw tests
+overlap: a neighbour's words can cover a turn's span while the turn's own words
+are absent, and the earlier three-part decomposition charged exactly those
+turns to attribution.
+
+    system              interviewer          participant
+                        lost   wrong         lost   wrong
+    chirp3             18.8%    6.5%        13.9%    9.6%
+    verbatimize        19.2%    6.5%        14.4%    9.9%
+    baseline (3.1)     18.2%    3.4%        19.3%    5.5%
+    ours (c1)          20.4%    3.0%        29.8%    6.6%
+
+**Correction.** The superseded version of this figure was read as "our pipeline
+misattributes the participant 29.4% against 20.2% for the interviewer, while
+pyannote 3.1 is near-even", and that was called the strongest argument for
+their diarizer. Counted properly the misattribution rates are 6.6% and 3.0%
+against 3.1's 5.5% and 3.4%: **ours is better on interviewer turns and worse on
+participant ones**, not uniformly worse, and the gap is a third the size
+claimed. Do not quote the 29.4 / 20.2 figures.
+
+What survives is the loss asymmetry, which is larger: ours loses **29.8% of
+participant turns** against chirp3's 13.9%, and chirp3 loses more of the
+interviewer's (18.8%) than the participant's. Missing words dominate misfiled
+ones for every system, everywhere.
+
 ### Zero-duration words were all UNKNOWN (fixed 2026-08-19)
 
 `merge.assign_speakers` assigns by maximum temporal overlap, and an instant
