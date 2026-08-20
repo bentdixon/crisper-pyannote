@@ -459,8 +459,8 @@ def main(argv: list[str] | None = None) -> int:
             "visit", "system", "speaker", "length", "length_bucket",
             "previous_bucket", "ref_words", "hyp_words", "lost_entirely",
             "lost_to_speaker", "wrong_speaker", "lost_beyond_tolerance",
-            "recovered", "content_lost", "recovered_wide", "content_lost_wide",
-            "nearest_word",
+            "recovered", "content_lost", "content_mostly_lost",
+            "recovered_wide", "content_lost_wide", "nearest_word",
         ]
         with open(args.csv, "w", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields)
