@@ -1,0 +1,8 @@
+PronetCA/CA09370/day0076_session002
+PronetCA/CA12331/day0001_session001
+PronetCA/CA16121/day0074_session003
+PronetCA/CA17436/day0099_session004
+PronetCA/CA22695/day0001_session001
+PronetGA/GA11470/day0001_session001
+PronetGA/GA21312/day0018_session002
+PronetIR/IR51240/day0137_session004

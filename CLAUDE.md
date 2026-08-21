@@ -891,6 +891,54 @@ Side effect worth noting: orphan predicted-speaker words charged to the
 nearest transcript speaker fell from 7,580 to 1,095, because short runs
 carrying UNKNOWN were absorbed into their neighbours.
 
+### Gemma does fix short-run speaker labels, by a third of a small ceiling (2026-08-21)
+
+`scripts/correct_speakers_llm.py`. Whole transcript rendered as numbered turns
+carrying speaker, start time and the silence before each turn; the model
+returns JSON corrections addressed by turn number plus a verbatim quote, and
+`locate` is the gate. Pilot 8 visits, held-out 24, sets drawn by
+`scripts/select_speaker_sets.py` with a fixed seed **before** anything ran.
+
+    held-out 24 visits          WER    sWER     DER  DERconf  QTP-F1
+    ours                      14.5%   21.2%   18.3%    14.1%   89.9%
+    ours + Gemma repair       14.5%   20.9%   17.9%    13.7%   90.2%
+    ours + short-run rule     14.5%   22.5%   22.2%    18.0%   90.2%
+
+    paired per-visit, exact sign test on the discordant visits
+    sWER           Gemma better 17, worse  1, tied 6    p = 0.0001
+    DER confusion  Gemma better 14, worse  6, tied 4    p = 0.115
+    sWER           rule  better  5, worse 19            p = 0.0066
+
+**The direction is unambiguous and it replicated on held-out data** -- 17 of 24
+visits improved against 1 worsened. The magnitude is 0.3 sWER points, against
+the 0.9 the headroom study said was available, so the model captures about a
+third of a ceiling that was small to begin with.
+
+Over all 32 corrected transcripts: 292 corrections proposed, 267 applied, 293
+words moved, and of the moves that can be checked against the transcript **200
+went to the right speaker and 40 to the wrong one -- 83% precision, net +160
+words**. The words moved are the intended class: yeah 30, ok 13, no 9, mm-hmm 5,
+right 3 in the pilot. Recall is the weak side, roughly a quarter of what the
+oracle would move, which is the correct failure direction here.
+
+WER is identical to the digit in every arm including its sub/del/ins split,
+which is the invariant proving these runs only touched speaker labels.
+
+Cost: 24 transcripts in 18 minutes on one H100, so about 3.4 GPU-hours for the
+full 269 on one tree. Validation rates were healthy throughout -- 0 unmatched
+quotes on the held-out set, 3 spans too long, 7 rejected speakers, 0 conflicts,
+3 failed windows of ~30.
+
+Why this is not the Qwen result: that one applied 1 of 163 flags because it
+located turns by exact string equality on a rendered line and the model
+paraphrased. Numbered turns plus a verbatim quote validated by `locate` gets
+91% of proposals applied.
+
+**Worth having, not worth prioritising.** 0.3 sWER points is a fifth of what
+diarize-first windowing delivered with no model at all, and the two are
+complementary -- the corrector has not been tried on `ours_diar`, where the
+headroom study puts its ceiling at 0.2 points.
+
 ### Diarize-first windowing recovers the short turns (2026-08-20)
 
 `--longform diarization` in `asr.py`/`cli.py`/`run_cohort.py` is the other
