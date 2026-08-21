@@ -335,6 +335,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", default=None)
     parser.add_argument("--csv", default=None, help="per-turn rows, one per system")
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument(
+        "--subset", default=None, metavar="FILE",
+        help=(
+            "newline list of cohort-relative visit paths. Needed whenever one "
+            "arm covers fewer visits than another: without it the short arm is "
+            "silently scored on its own subset and compared against the others' "
+            "full cohort, which is not a comparison"
+        ),
+    )
     return parser
 
 
@@ -358,6 +367,22 @@ def main(argv: list[str] | None = None) -> int:
         if (p / "human").is_dir() and any((p / "human").glob("*.txt"))
         and any((p / "audio").glob("*.wav"))
     )
+    if args.subset:
+        wanted = {
+            line.strip() for line in Path(args.subset).read_text().splitlines()
+            if line.strip()
+        }
+        visits = [p for p in visits if p.relative_to(cohort).as_posix() in wanted]
+        # Matching nothing means a stale or mis-rooted list; scoring zero visits
+        # would otherwise look like a completed run that found no data.
+        if not visits:
+            logger.error("--subset %s matched none of the cohort's visits", args.subset)
+            return 1
+        if len(visits) != len(wanted):
+            logger.warning(
+                "--subset listed %d visit(s), %d matched the cohort",
+                len(wanted), len(visits),
+            )
     if args.limit:
         visits = visits[: args.limit]
     logger.info("Scoring %d system(s) over %d visit(s)", len(requested), len(visits))
