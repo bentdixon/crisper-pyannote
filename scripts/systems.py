@@ -44,6 +44,20 @@ SYSTEMS: list[tuple[str, list[str], str, str]] = [
         "community-1 segments used as the ASR windows instead of silero VAD",
     ),
     (
+        "ours_spk",
+        ["CrisperWhisper 2.0 ASR", "pyannote community-1",
+         "Gemma 4 31B speaker repair"],
+        "#8a5cf0",
+        "community-1 pipeline, short-run speaker labels corrected by Gemma",
+    ),
+    (
+        "ours_spk_rule",
+        ["CrisperWhisper 2.0 ASR", "pyannote community-1",
+         "short-run speaker rule"],
+        "#c0a3f5",
+        "community-1 pipeline, short runs given their longer neighbour",
+    ),
+    (
         "ours_llm",
         ["CrisperWhisper 2.0 ASR", "pyannote community-1", "Qwen2.5-7B review"],
         "#7fb0e8",
