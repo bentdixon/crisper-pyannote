@@ -152,7 +152,17 @@ def relabel(
     transcript writes INTERVIEWER, and a rename is not a correction.
     """
     mapping = mapping or {}
+    # Every word is first renamed into the reference's label space. Without
+    # this the output carries INTERVIEWER on the words the oracle touched and
+    # SPEAKER_00 on the rest, which is four streams where there are two: sWER
+    # improved but DER nearly doubled, because the two halves of one speaker
+    # could not be matched to each other. A label that has no counterpart
+    # (UNKNOWN, or a third speaker the assignment did not use) keeps its own
+    # name and is charged as its own stream, which is correct.
     out = [dict(word) for word in words]
+    for word in out:
+        label = word.get("speaker") or "UNKNOWN"
+        word["speaker"] = mapping.get(label, label)
     changed = anchored = 0
     for start, end in speaker_runs(out):
         if max_run is not None and end - start > max_run:
@@ -161,7 +171,7 @@ def relabel(
             if index not in truth:
                 continue
             anchored += 1
-            if mapping.get(out[index].get("speaker") or "UNKNOWN") != truth[index]:
+            if out[index].get("speaker") != truth[index]:
                 changed += 1
             out[index]["speaker"] = truth[index]
     return out, changed, anchored
