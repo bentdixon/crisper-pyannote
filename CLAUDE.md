@@ -815,6 +815,51 @@ survived.
 Figures: `lost-turns` (by turn length), `turn-outcomes`, `lost-turn-distance`,
 `turn-outcomes-by-role`, via `export_charts.py --lost-turns`.
 
+### What a speaker relabeller could win, measured before building one (2026-08-21)
+
+`scripts/speaker_headroom.py`. A corrector that only rewrites `word["speaker"]`
+cannot invent words, so its ceiling is fixed by the words already present.
+Measured by relabelling every word to the speaker the transcript records for
+it and rescoring, over all 269 visits:
+
+    tree        variant      sWER   DERconf   QTP-F1   words moved
+    ours        baseline   0.1925    0.1546   0.9209             0
+                short-run  0.1833    0.1525   0.9268         8,385  (1.01%)
+                oracle     0.1504    0.1376   0.9478        22,783  (2.74%)
+    ours_diar   baseline   0.1836    0.1087   0.9168             0
+                short-run  0.1815    0.1079   0.9196         2,586  (0.30%)
+                oracle     0.1539    0.0969   0.9367        13,267  (1.56%)
+
+**A perfect short-run corrector is worth 0.9 sWER points on the silero tree and
+0.2 on the diarize-first tree.** DER confusion moves 0.2 points at best. Short
+runs hold 37% of the oracle's corrections on `ours` and only 19% on
+`ours_diar`, because diarize-first windowing already produces coherent runs --
+it took most of that headroom without a model.
+
+The interesting number is the rest of the oracle: 4.2 sWER points on `ours`,
+and roughly two thirds of it sits inside runs of four words or more. The
+misattribution that matters is not small words between utterances, it is
+longer stretches. A corrector aimed at short runs is aimed at the smaller half.
+
+Two construction errors, both of which produced coherent-looking tables:
+
+- **A timing-anchored oracle scored worse than the system it bounded** (sWER
+  0.246 against 0.144 on six visits). Human turn marks are accurate to about a
+  third of a second, so anchoring on them misfiles the words either side of
+  every boundary, and the diarizer's boundaries are sharper than the
+  annotation's. `truth_by_content` aligns the two token streams instead, the
+  same correction `lost_turns.py` needed.
+- **Mixed label spaces doubled DER.** Relabelled words carried `INTERVIEWER`
+  while untouched ones kept `SPEAKER_00`, so each transcript had four speaker
+  streams where it has two and the halves of one speaker could not be matched
+  to each other. Every word is now renamed through the scorer's own assignment
+  before anything is overwritten.
+
+`scripts/correct_speakers_rule.py` is the no-model comparator (any run of three
+words or fewer takes its longer neighbour), sharing `scripts/speaker_rewrite.py`
+with any LLM corrector so the two are byte-comparable. 17 checks in
+`tests/test_speaker_rewrite.py`.
+
 ### Diarize-first windowing recovers the short turns (2026-08-20)
 
 `--longform diarization` in `asr.py`/`cli.py`/`run_cohort.py` is the other
