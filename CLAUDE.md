@@ -860,6 +860,37 @@ words or fewer takes its longer neighbour), sharing `scripts/speaker_rewrite.py`
 with any LLM corrector so the two are byte-comparable. 17 checks in
 `tests/test_speaker_rewrite.py`.
 
+### The no-model rule makes it worse, which is the useful half of the result (2026-08-21)
+
+`scripts/correct_speakers_rule.py` over all 269 visits of `outputs/ours`:
+26,461 short runs moved, 35,809 words (3.05%), four seconds of CPU.
+
+    system                              WER   sWER    DER  DERconf  QTP-F1
+    ours                              11.5%  19.2%  16.2%    15.5%   92.1%
+    ours + short-run rule             11.5%  20.7%  17.9%    17.2%   91.5%
+
+**WER is identical to the digit**, including its sub/del/ins split, which is
+the invariant that proves the rewrite touched only speaker labels. Every
+speaker-dependent metric got worse: sWER by 1.5 points, DER confusion by 1.7,
+against an available headroom of 0.9.
+
+The reason is in the earlier measurement: six of every ten one-word runs are
+already correct, and a rule that cannot read the words moves all of them. So
+the finding is not "short runs cannot be fixed" but **"they cannot be fixed
+from the timeline"** -- deciding which short runs are wrong requires knowing
+that "no" answers the question before it. That is the one thing a language
+model could contribute here, and it is why the comparator was worth building
+before the model rather than after.
+
+It does not change the arithmetic. A perfect corrector still wins 0.9 sWER
+points on this tree and 0.2 on `ours_diar`, so the model would have to be
+near-flawless at a task the rule proves is not trivial, for a fifth of what
+diarize-first windowing already delivered with no model at all.
+
+Side effect worth noting: orphan predicted-speaker words charged to the
+nearest transcript speaker fell from 7,580 to 1,095, because short runs
+carrying UNKNOWN were absorbed into their neighbours.
+
 ### Diarize-first windowing recovers the short turns (2026-08-20)
 
 `--longform diarization` in `asr.py`/`cli.py`/`run_cohort.py` is the other
