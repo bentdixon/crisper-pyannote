@@ -430,7 +430,7 @@ def tail_figures(jiwer: dict | None, lost: dict | None,
             svg, w, h,
             "For every turn the typist recorded, are that turn's words anywhere in "
             "what the system transcribed around it. On long turns our pipeline is the "
-            "best of the four. On turns under two seconds it is much the worst, "
+            "best of them. On turns under two seconds it was much the worst, "
             "losing short answers -- no, yeah, okay, yes -- at about twice Chirp-3's "
             "rate. Those are ordinary words, not a spelling mismatch: only the "
             "mm-hmm cases, about a sixth of them, could be notation. Widening the "
@@ -438,7 +438,11 @@ def tail_figures(jiwer: dict | None, lost: dict | None,
             "by two to four points and changes no ordering, so this is speech that "
             "was not transcribed rather than speech that was mistimed. Word error "
             "rate barely registers any of it, because a lost one-word answer is one "
-            "missing word among thousands.",
+            "missing word among thousands. Cutting the audio on the diarizer's own "
+            "speaker segments instead of on voice activity is the fix: it takes "
+            "turns under two seconds from 50.0% lost to 30.9% and the whole corpus "
+            "from 25.0% to 18.4%, level with Chirp-3, at a cost of 1.7 points of "
+            "word error rate.",
             clean=clean,
         )))
     svg, w, h = turn_outcome_svg(lost, legend=True)

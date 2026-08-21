@@ -815,6 +815,46 @@ survived.
 Figures: `lost-turns` (by turn length), `turn-outcomes`, `lost-turn-distance`,
 `turn-outcomes-by-role`, via `export_charts.py --lost-turns`.
 
+### Diarize-first windowing recovers the short turns (2026-08-20)
+
+`--longform diarization` in `asr.py`/`cli.py`/`run_cohort.py` is the other
+team's ordering ported onto our models: diarize with community-1 first, then
+use each speaker segment as an ASR window, instead of cutting on silero VAD.
+Speakers come from the segment that produced the window, so `assign_speakers`
+is bypassed and there is no UNKNOWN bucket at all. Full cohort at
+`outputs/ours_diar` on gpu2, 269/269, zero failures, registered as `ours_diar`.
+
+    tree                 files   words      UNKNOWN
+    outputs/ours          269    1,174,706   11,544
+    outputs/ours_diar     269    1,200,446        0
+
+    system                     jiwer WER    sub     del     ins   ratio
+    ours (silero windows)         0.1447  0.0436  0.0906  0.0105  0.920
+    baseline (pyannote 3.1)       0.1584  0.0559  0.0815  0.0209  0.939
+    ours_diar (c1 windows)        0.1619  0.0559  0.0869  0.0191  0.932
+    chirp3                        0.1746  0.0516  0.0926  0.0303  0.938
+
+    system                     turn loss   misattributed    <1s     <2s
+    chirp3                         0.176           0.087  0.521   0.196
+    ours (silero windows)          0.250           0.051  0.753   0.500
+    ours_diar (c1 windows)         0.184           0.037  0.620   0.309
+    baseline (pyannote 3.1)        0.179           0.048  0.593   0.309
+
+**The trade is 1.7 points of WER for 6.6 points of turn loss.** Deletions fall
+and the word ratio rises as intended, but substitutions go up 28% and
+insertions nearly double: it recovers speech and mistranscribes some of it.
+Turns under two seconds go from 50.0% lost to 30.9%, and **misattribution
+improves too**, 5.1% to 3.7%, the best of the four systems.
+
+It lands almost exactly on `baseline`'s error profile (0.1619 against 0.1584,
+identical substitution rate), which is the check that the port is faithful:
+adopting their windowing reproduces their errors, and the residual is
+community-1 against 3.1 segment boundaries.
+
+Which to ship depends on what the transcripts are for. WER favours silero;
+anything that reads the interview as an exchange -- a symptom checklist, where
+a missing "no" is missing data -- favours diarize-first.
+
 ### By role, on the content measure (2026-08-20)
 
 `turn-outcomes-by-role` is hierarchical -- the model named once with its two
