@@ -934,6 +934,44 @@ located turns by exact string equality on a rendered line and the model
 paraphrased. Numbered turns plus a verbatim quote validated by `locate` gets
 91% of proposals applied.
 
+**Turn-loss view, the 32 corrected visits** (`lost_turns.py --subset`, added
+for this because the corrected arm covers 32 visits and the others 269 --
+without it the short arm is scored on its own subset and set beside the
+others' full cohort):
+
+    system                     turn loss   misattributed    <1s     <2s
+    ours                          0.2981          0.0396  0.7500  0.5134
+    ours + Gemma repair           0.2981          0.0342  0.7500  0.5134
+    ours + short-run rule         0.2981          0.1044  0.7500  0.5134
+
+    by role                    interviewer      participant
+                              lost   wrong     lost   wrong
+    ours                     21.2%   3.48%    38.3%   4.71%
+    ours + Gemma repair      21.2%   3.45%    38.3%   3.71%
+    ours + short-run rule    21.2%   4.57%    38.3%  16.92%
+
+**`content_lost_rate` is identical to four decimals in every arm and every
+length bucket**, which is the second invariant: relabelling cannot change
+whether a turn's words were transcribed, and a movement here would mean the
+rewrite corrupted something.
+
+Misattribution falls 13.6% relative overall, and **the whole of it is on
+participant turns** -- 4.71% to 3.71%, a fifth of the error gone, against
+interviewer turns which barely move (3.48% to 3.45%). That is the asymmetry the
+design predicts: the error being fixed is a short participant answer absorbed
+into the interviewer's question, so the participant's turn is the one that gets
+its words back. It is also the side `CLAUDE.md` already recorded as our weak
+one (6.6% participant against 3.0% interviewer corpus-wide).
+
+The rule goes the other way on the same axis, and hard: participant
+misattribution 4.71% to 16.92%, 3.6x worse.
+
+Row-level detail for every change is at `outputs/private/speaker_corrections.csv`
+on gpu2 (293 rows: visit, time, word, both speakers, what the transcript says,
+a verdict, and context either side). **It carries interview text in the clear
+and must stay out of the repo and out of any artifact.** Verdicts: 200
+corrected, 40 broke it, 52 unanchored, 1 no change.
+
 **Worth having, not worth prioritising.** 0.3 sWER points is a fifth of what
 diarize-first windowing delivered with no model at all, and the two are
 complementary -- the corrector has not been tried on `ours_diar`, where the
