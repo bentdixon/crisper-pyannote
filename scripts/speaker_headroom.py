@@ -28,8 +28,10 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import difflib
 import json
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -38,7 +40,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "finetune"))
 
 import systems as registry  # noqa: E402
 from coverage import clip_words, covered_turns  # noqa: E402
-from evaluate_systems import ADAPTERS, as_words, score_visit  # noqa: E402
+from evaluate_systems import (  # noqa: E402
+    ADAPTERS,
+    align_streams,
+    as_words,
+    predicted_streams,
+    reference_streams,
+    score_visit,
+)
 from prepare_data import load_timestamped_text  # noqa: E402
 
 logger = logging.getLogger("speaker_headroom")
@@ -54,6 +63,16 @@ MAX_RUN = 3
 # and it is checked as one below.
 MOVABLE = ["swer", "der", "der_confusion", "qtp_f1"]
 
+# Same tokenizer as the lost-turns content measure: bracketed markup dropped so
+# CrisperWhisper's [UM] does not have to match a typed "um", braces dropped so
+# the PII convention does not break an alignment.
+TOKEN = re.compile(r"[a-z0-9']+")
+
+
+def content_tokens(text: str) -> list[str]:
+    text = re.sub(r"\[[^\]]*\]", " ", (text or "").lower())
+    return TOKEN.findall(text.replace("{", " ").replace("}", " "))
+
 
 def speaker_at(turns: list[dict], starts: list[float], moment: float) -> str | None:
     """Reference speaker talking at `moment`, or None outside every turn."""
@@ -62,6 +81,47 @@ def speaker_at(turns: list[dict], starts: list[float], moment: float) -> str | N
         return None
     turn = turns[index]
     return turn["speaker"] if moment <= turn["end"] else None
+
+
+def truth_by_content(words: list[dict], turns: list[dict]) -> dict[int, str]:
+    """Speaker per hypothesis word, taken from the transcript text it matches.
+
+    The obvious oracle -- give each word the speaker the reference has talking
+    at that instant -- does not work here, and the failure is instructive. Human
+    turn marks are accurate to about a third of a second, so a timing anchor
+    misfiles the words either side of every boundary, and there are tens of
+    thousands of boundaries. Measured on six visits it scored *worse* than the
+    system it was meant to bound: sWER 0.246 against a baseline 0.144. The
+    diarizer's boundaries are sharper than the annotation's, so a timing oracle
+    is not an upper bound on anything.
+
+    Aligning the two token streams instead makes the anchor the words
+    themselves, which is what `lost_turns.py` had to do for the same reason.
+    Words that match nothing in the reference -- insertions, and speech the
+    typist never transcribed -- get no entry and keep whatever label they had.
+    """
+    ref_tokens: list[str] = []
+    ref_speaker: list[str] = []
+    for turn in turns:
+        for token in content_tokens(turn["text"]):
+            ref_tokens.append(token)
+            ref_speaker.append(turn["speaker"])
+
+    hyp_tokens: list[str] = []
+    owner: list[int] = []
+    for index, word in enumerate(words):
+        for token in content_tokens(word["word"]):
+            hyp_tokens.append(token)
+            owner.append(index)
+
+    truth: dict[int, str] = {}
+    matcher = difflib.SequenceMatcher(None, ref_tokens, hyp_tokens, autojunk=False)
+    for i, j, size in matcher.get_matching_blocks():
+        for offset in range(size):
+            # First match wins: a word contributing two tokens that straddle a
+            # turn boundary belongs to the turn it starts in.
+            truth.setdefault(owner[j + offset], ref_speaker[i + offset])
+    return truth
 
 
 def speaker_runs(words: list[dict]) -> list[tuple[int, int]]:
@@ -75,29 +135,36 @@ def speaker_runs(words: list[dict]) -> list[tuple[int, int]]:
     return runs
 
 
-def relabel(words: list[dict], turns: list[dict], max_run: int | None) -> tuple[list[dict], int]:
-    """Copy of `words` with true speakers filled in, and how many changed.
+def relabel(
+    words: list[dict], truth: dict[int, str], max_run: int | None,
+    mapping: dict[str, str] | None = None,
+) -> tuple[list[dict], int, int]:
+    """Copy of `words` with true speakers filled in, changed count, anchored count.
 
-    `max_run` of None relabels everything; an integer restricts the rewrite to
-    runs of at most that length. Words the reference places in no turn keep
-    their original label -- an oracle should not be credited for guessing in a
-    region the transcript never covered.
+    `max_run` of None relabels every anchored word; an integer restricts the
+    rewrite to runs of at most that length. Words with no entry in `truth`
+    match nothing in the transcript and keep their original label -- an oracle
+    should not be credited for guessing where there is no answer.
+
+    "Changed" counts words whose speaker actually moved, compared through
+    `mapping` (hypothesis label -> reference label). Without it every word
+    would count as changed, because the pipeline writes SPEAKER_00 where the
+    transcript writes INTERVIEWER, and a rename is not a correction.
     """
-    starts = [t["start"] for t in turns]
+    mapping = mapping or {}
     out = [dict(word) for word in words]
-    changed = 0
+    changed = anchored = 0
     for start, end in speaker_runs(out):
         if max_run is not None and end - start > max_run:
             continue
         for index in range(start, end):
-            word = out[index]
-            middle = (float(word["start"]) + float(word["end"])) / 2
-            truth = speaker_at(turns, starts, middle)
-            if truth is None or truth == word.get("speaker"):
+            if index not in truth:
                 continue
-            word["speaker"] = truth
-            changed += 1
-    return out, changed
+            anchored += 1
+            if mapping.get(out[index].get("speaker") or "UNKNOWN") != truth[index]:
+                changed += 1
+            out[index]["speaker"] = truth[index]
+    return out, changed, anchored
 
 
 def word_accuracy(words: list[dict], turns: list[dict], mapping: dict[str, str]) -> tuple[int, int]:
@@ -179,17 +246,25 @@ def main(argv: list[str] | None = None) -> int:
             if not words:
                 continue
 
+            # Hypothesis labels are SPEAKER_00/01, reference labels are
+            # INTERVIEWER/PARTICIPANT or S1/S2, so "changed" is only meaningful
+            # through the same assignment the scorer itself uses.
+            assignment = align_streams(reference_streams(turns), predicted_streams(words))
+            mapping = {hyp: ref for ref, hyp in assignment.items() if hyp is not None}
+            truth = truth_by_content(words, turns)
+
             entry = {"visit": relative.as_posix(), "words": len(words)}
             for variant, cap in (("baseline", 0), ("short_run", args.max_run), ("oracle", None)):
                 if variant == "baseline":
-                    candidate, changed = words, 0
+                    candidate, changed, anchored = words, 0, 0
                 else:
-                    candidate, changed = relabel(words, turns, cap)
+                    candidate, changed, anchored = relabel(words, truth, cap, mapping)
                 scored = score_visit(turns, candidate)
                 if scored is None:
                     entry = None
                     break
                 entry[f"{variant}_changed"] = changed
+                entry[f"{variant}_anchored"] = anchored
                 for key in MOVABLE + ["wer"]:
                     entry[f"{variant}_{key}"] = scored[key]
             if entry:
@@ -209,6 +284,7 @@ def main(argv: list[str] | None = None) -> int:
             changed = sum(e[f"{variant}_changed"] for e in entries)
             block[f"{variant}_changed_words"] = changed
             block[f"{variant}_changed_share"] = round(changed / max(total_words, 1), 4)
+            block[f"{variant}_anchored_words"] = sum(e[f"{variant}_anchored"] for e in entries)
             for key in MOVABLE + ["wer"]:
                 values = [e[f"{variant}_{key}"] for e in entries if e.get(f"{variant}_{key}") is not None]
                 block[f"{variant}_{key}"] = round(sum(values) / len(values), 4) if values else None
